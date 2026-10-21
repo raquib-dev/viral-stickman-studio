@@ -140,11 +140,15 @@ async def render(ctx) -> dict:
                 await asyncio.sleep(delay)
                 delay *= 2
         ctx.add_cost(res.cost_usd, f"clip {sp.index + 1}")
+        ratio_ok = not st.wrong_orientation(info, sp.ratio)
+        if not ratio_ok:
+            ctx.log(f"clip {sp.index + 1} came back {info['width']}x{info['height']}, not {sp.ratio}; stitch will crop it "
+                    "to fill the frame, or regenerate it", "warn")
         ctx.write_json(meta_path, {"index": sp.index, "status": "done", "backend": backend_name, "attempts": attempt,
                                    "cost_usd": res.cost_usd, "interaction_id": res.interaction_id,
                                    "prompt_hash": _prompt_hash(sp.prompt), "duration": info["duration"],
                                    "width": info["width"], "height": info["height"], "has_audio": info["has_audio"],
-                                   "continuity": sp.continuity, "meta": res.meta})
+                                   "ratio_ok": ratio_ok, "continuity": sp.continuity, "meta": res.meta})
         prev = res
         ctx.progress((n + 1) / len(todo), f"clip {sp.index + 1} done ({n + 1}/{len(todo)})")
     return {"outputs": ["clips/"]}
@@ -163,6 +167,10 @@ async def stitch_stage(ctx) -> dict:
     res_name = ctx.settings["render"]["resolution"]
     w, h = dims(p["ratio"], res_name if res_name in ("360p", "720p", "1080p") else "1080p")
     stitched = ctx.path("final/stitched.mp4")
+    wrong = [c.name for c in clips if st.wrong_orientation(probe(c), p["ratio"])]
+    if wrong:
+        ctx.log(f"{', '.join(wrong)} not {p['ratio']}: cropped from the centre to fill the frame "
+                "(regenerate them for a proper framing)", "warn")
     await th(st.concat, clips, stitched, p["ratio"], res_name if res_name != "4k" else "1080p")
     ctx.progress(0.35, "concatenated")
     lengths = [(i := probe(c))["video_duration"] or i["duration"] for c in clips]

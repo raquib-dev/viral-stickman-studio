@@ -12,6 +12,14 @@ from .media import dims, filter_path, probe, run_ffmpeg
 LONG = 3600
 
 
+def wrong_orientation(info: dict, ratio: str) -> bool:
+    """True when a clip is landscape in a 9:16 video or portrait in a 16:9 one."""
+    w, h = info.get("width") or 0, info.get("height") or 0
+    if not w or not h:
+        return False
+    return (w > h) if ratio == "9:16" else (h > w)
+
+
 def concat(clips: list[Path], out: Path, ratio: str, resolution: str, fps: int = 24) -> Path:
     w, h = dims(ratio, resolution)
     args: list[str] = []
@@ -24,8 +32,13 @@ def concat(clips: list[Path], out: Path, ratio: str, resolution: str, fps: int =
         # each clip's audio is cut or padded to its own video length, so a clip whose audio runs long
         # (common with generated clips) cannot push every later clip and its captions out of sync
         dur = info["video_duration"] or info["duration"]
-        parts.append(f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,fps={fps},setsar=1,format=yuv420p,"
+        if wrong_orientation(info, ratio):
+            # a landscape clip in a vertical video (or the reverse): fill the frame from the centre instead of
+            # shrinking it into a small letterboxed strip
+            fit = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+        else:
+            fit = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
+        parts.append(f"[{i}:v]{fit},fps={fps},setsar=1,format=yuv420p,"
                      f"trim=duration={dur:.3f},setpts=PTS-STARTPTS[v{i}]")
         if info["has_audio"]:
             parts.append(f"[{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"

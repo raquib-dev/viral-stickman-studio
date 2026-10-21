@@ -57,6 +57,7 @@ export default function Render() {
                     src={`${fileUrl(slug!, name)}?v=${c.prompt_hash}-${c.attempts}-${version}`}
                     poster={`${fileUrl(slug!, name.replace(".mp4", ".last.png"))}?v=${c.prompt_hash}-${c.attempts}-${version}`} controls preload="none" />
                 ) : <Empty>{c?.error ?? "not rendered yet"}</Empty>}
+                {c?.ratio_ok === false && <p className="mt-1 text-xs" style={{ color: "var(--serious)" }} data-testid={`ratio-warn-${k + 1}`}>⚠ came back {c.width}×{c.height}, not {snap?.project.data.ratio}. Stitch crops it to fill the frame; regenerate it for proper framing.</p>}
                 {c && <p className="mt-1 text-[11px] text-ink-3">poster = last frame (the next clip starts from it) · {c.backend} · {fmtUsd(c.cost_usd)} · {c.attempts ?? 0} attempt(s) · {c.continuity}{c.meta?.placeholder ? " · placeholder" : ""}</p>}
                 <button className="btn mt-2 w-full justify-center" disabled={snap?.pipeline?.status === "running"} data-testid={`regen-${k + 1}`}
                   onClick={async () => { setErr(null); try { await api.post(`/projects/${slug}/clips/${k + 1}/regenerate`); } catch (e: any) { setErr(e.message); } }}>↻ Regenerate this clip only</button>

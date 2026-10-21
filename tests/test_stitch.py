@@ -43,3 +43,14 @@ def test_whisper_failure_falls_back(monkeypatch, tmp_path):
 def test_estimate_uses_real_clip_lengths():
     words = cap.estimate_words(["one two", "three four"], durations=[8.0, 10.0])
     assert words[2].s >= 8.0 and words[-1].e <= 18.0
+
+
+def test_landscape_clip_fills_vertical_frame(tmp_path):
+    land = tmp_path / "land.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", "color=c=white:s=640x360:r=24:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(land)])
+    assert st.wrong_orientation(probe(land), "9:16") and not st.wrong_orientation(probe(land), "16:9")
+    out = st.concat([land], tmp_path / "out.mp4", "9:16", "360p")
+    frame = tmp_path / "f.png"
+    run_ffmpeg(["-ss", "0.5", "-i", str(out), "-frames:v", "1", "-vf", "crop=360:40:0:0,scale=1:1", "-f", "rawvideo",
+                "-pix_fmt", "gray", str(frame)])
+    assert frame.read_bytes()[0] > 200  # top edge is picture, not a black letterbox bar

@@ -34,7 +34,8 @@ class OmniFalBackend:
             # fal has no extend endpoint in v1.1; continuity uses the previous clip's last frame
             image_url = await asyncio.to_thread(self._fal.upload_file, str(prev.last_frame))
             args["image_url"] = image_url
-            args.pop("aspect_ratio", None)
+            # keep aspect_ratio: without it the endpoint falls back to its 16:9 default, so every clip after the
+            # first came back landscape in a 9:16 Short
             endpoint = I2V
         log(f"omni-fal clip {clip.index + 1}: {endpoint.rsplit('/', 1)[-1]}, {clip.ratio} {clip.resolution}")
 

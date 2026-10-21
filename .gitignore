@@ -1,0 +1,27 @@
+# reference repos, cloned for reading only (scripts/fetch_vendor.sh)
+/vendor/
+# secrets
+.env
+.env.*
+!.env.example
+# runtime data
+/projects/*
+!/projects/.gitkeep
+/data/
+*.sqlite3
+*.db
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# node
+node_modules/
+/frontend/dist/
+# os
+.DS_Store
+Thumbs.db
+/frontend/node_modules/
+/frontend/test-results/
+/frontend/playwright-report/
+*.tsbuildinfo

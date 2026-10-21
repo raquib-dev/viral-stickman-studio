@@ -1,0 +1,30 @@
+# Third-party code
+
+The skill packs below are vendored, unmodified, into `.claude/skills/` so the app's Claude Agent SDK
+loads them as project skills and the repo works the same on any machine after `git pull`. Each skill
+folder carries its pack's `LICENSE`. All three are MIT.
+
+| Pack | Upstream | Commit | Vendored folders | License |
+|---|---|---|---|---|
+| Stickman Video Director | https://github.com/kaomei/stickman-video-director | `70199c86911d84de9804441ce581eeb25142efba` | `directing-stickman-videos` (includes Style 5, `references/historical-cartoon.md`) | MIT, © 2026 Stickman Video Director contributors |
+| YouTube agent skill | https://github.com/Jakeschincariol/youtube-agent-skill | `a2feb2104981a375ffd4f87ee04f4f5344ac43c6` | `yt-audit yt-chapters yt-comment yt-edit yt-package yt-plan yt-retention yt-script yt-seo yt-shorts yt-viral` | MIT, © 2026 Jake Schincariol |
+| Instagram agent skill | https://github.com/Jakeschincariol/instagram-agent-skill | `d03c56bb598be770c60b201f94237e5d1a4268a6` | `ig-audit ig-caption ig-carousel ig-comment ig-dm ig-human ig-plan ig-profile ig-reel ig-reply ig-repurpose ig-story ig-viral` | MIT, © 2026 Jake Schincariol |
+
+The skill folders must stay siblings: `yt-viral/swipe.py`, `yt-chapters/chapters.py` and
+`yt-retention/retention.py` import from `../yt-script` and `../yt-edit`; `ig-viral/swipe.py` imports
+from `../ig-reel`.
+
+## Read-only references (not committed)
+
+`scripts/fetch_vendor.sh` clones these into the gitignored `vendor/` folder for study. No code from them
+is copied into this repo; ideas adapted from them are credited in `docs/repo-analysis.md`.
+
+| Repo | Commit | License |
+|---|---|---|
+| https://github.com/dsauce/stickman-kino | `d3d665301c0b62f04c885785e6bd6044de0785c6` | MIT, © 2026 Prerit Ahuja |
+| https://github.com/0xS4N4TG/papercut-explainer | `ff8223abc8136cc09e8d7e9b62ecb5d080c389e1` | MIT, © 2026 sanat |
+
+## Updating a pack
+
+Re-copy the folders from a newer upstream commit, keep each `LICENSE`, update the commit here, and run
+the test suite (the tool wrappers pin the CLI flags they rely on).

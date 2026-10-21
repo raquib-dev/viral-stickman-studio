@@ -1,0 +1,12 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+python-dotenv>=1.0
+jsonschema>=4.20
+python-multipart>=0.0.9
+claude-agent-sdk>=0.2.170
+google-genai>=2.32.0
+fal-client>=1.0.3
+# optional extras (install yourself if you want them):
+#   yt-dlp          public auto-captions for discovery transcripts
+#   faster-whisper  word-accurate caption timing from the rendered audio

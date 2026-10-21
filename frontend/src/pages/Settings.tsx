@@ -43,7 +43,7 @@ export default function Settings() {
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm">Backend<select className="input" value={s.render.backend} onChange={(e) => set(["render", "backend"], e.target.value)}>
             <optgroup label="API (paid)"><option value="omni-fal">omni-fal (fal.ai, FAL_KEY)</option><option value="omni-gemini">omni-gemini (Gemini API, GEMINI_API_KEY)</option></optgroup>
-            <optgroup label="Local ($0, your machine)"><option value="local-stickman">local-stickman (built-in animator, any PC)</option><option value="local-comfyui">local-comfyui (Wan/LTX on your GPU)</option></optgroup>
+            <optgroup label="Local ($0, your machine)"><option value="local-threejs">local-threejs (3D low-poly stickman, three.js)</option><option value="local-stickman">local-stickman (built-in animator, any PC)</option><option value="local-comfyui">local-comfyui (Wan/LTX on your GPU)</option></optgroup>
             <optgroup label="Test"><option value="mock">mock (free placeholders)</option></optgroup></select></label>
           <label className="text-sm">Resolution<select className="input" value={s.render.resolution} onChange={(e) => set(["render", "resolution"], e.target.value)}>
             {["360p", "720p", "1080p", "4k"].map((r) => <option key={r}>{r}</option>)}</select></label>
@@ -53,6 +53,17 @@ export default function Settings() {
           <label className="text-sm">Max retries per clip<input className="input" type="number" min={0} max={5} value={s.render.max_retries} onChange={(e) => set(["render", "max_retries"], Number(e.target.value))} /></label>
           <label className="text-sm">Speaking rate (wpm, beats.py)<input className="input" type="number" min={100} max={220} value={s.speaking_wpm} onChange={(e) => set(["speaking_wpm"], Number(e.target.value))} /></label>
         </div>
+        {s.render.backend === "local-threejs" && (
+          <div className="mt-3 grid gap-3 rounded-lg border border-line p-3 md:grid-cols-3" data-testid="threejs-settings">
+            <label className="text-sm">Quality<select className="input" value={s.render.threejs.quality} onChange={(e) => set(["render", "threejs", "quality"], e.target.value)}>
+              <option value="high">high (glow + depth of field)</option><option value="medium">medium (glow only)</option><option value="draft">draft (fastest)</option></select></label>
+            <label className="text-sm">Frame rate<select className="input" value={s.render.threejs.fps} onChange={(e) => set(["render", "threejs", "fps"], Number(e.target.value))}>
+              {[24, 30, 60].map((f) => <option key={f} value={f}>{f} fps</option>)}</select></label>
+            <label className="text-sm">Browser<select className="input" value={s.render.threejs.browser_channel} onChange={(e) => set(["render", "threejs", "browser_channel"], e.target.value)}>
+              <option value="">auto (Edge on Windows)</option><option value="msedge">Microsoft Edge</option><option value="chrome">Google Chrome</option></select></label>
+            <p className="text-xs text-ink-3 md:col-span-3">Each clip's scene comes from <code>projects/&lt;slug&gt;/scenes/clip-NN.json</code> if you put one there (see <code>renderer/scenes/demo.json</code>), otherwise from the beat and voiceover by keyword. The voice is made first so the mouth follows it. Renders on your GPU through the browser: seconds per clip.</p>
+          </div>
+        )}
         {s.render.backend === "local-comfyui" && (
           <div className="mt-3 grid gap-3 rounded-lg border border-line p-3 md:grid-cols-3" data-testid="comfyui-settings">
             <label className="text-sm">ComfyUI URL<input className="input" value={s.render.comfyui.url} onChange={(e) => set(["render", "comfyui", "url"], e.target.value)} /></label>
@@ -150,6 +161,8 @@ function LocalServices() {
                 <li key={m.file}><span style={{ color: "var(--critical)" }}>✕ missing</span> <code>{m.file}</code> for {m.loader}
                   {m.available.length > 0 && <span className="text-ink-3"> (has: {m.available.join(", ")})</span>}</li>))}</ul>
             )}</Row>
+          <Row ok={st.threejs?.ok} name="three.js renderer" fix={<>{st.threejs?.fix} (README → three.js renderer)</>}>
+            {st.threejs?.ok ? "ready (Node + renderer build + browser driver)" : `missing: ${[!st.threejs?.node && "Node.js", !st.threejs?.deps && "renderer packages", !st.threejs?.built && "renderer build"].filter(Boolean).join(", ")}`}</Row>
           <Row ok={st.stickman?.ok} name="Stickman animator" fix={st.stickman?.error}>{st.stickman?.ok ? "ready (Pillow + ffmpeg)" : ""}</Row>
           <Row ok={st.tts?.kokoro || st.tts?.piper} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx</>}>
             {[st.tts?.kokoro && "Kokoro", st.tts?.piper && "Piper"].filter(Boolean).join(", ") || "no engine installed: local clips will be silent"}</Row>

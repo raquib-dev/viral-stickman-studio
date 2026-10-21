@@ -105,6 +105,9 @@ DEFAULTS: dict[str, Any] = {
                     # Wan 2.1 1.3B native size; 81 frames at 16 fps = 5 s, slowed to the 10 s clip. Fits 8 GB VRAM.
                     "gen_long_side": 832, "gen_short_side": 480, "frames": 81, "fps": 16},
         "stickman": {"fps": 24},
+        # three.js renderer (renderer/): quality high = bloom + depth of field; browser_channel "" = Edge on
+        # Windows, Playwright's Chromium elsewhere; browser_path overrides both
+        "threejs": {"fps": 24, "quality": "high", "browser_channel": "", "browser_path": ""},
     },
     "voice": {"tts": "auto", "kokoro_voice_male": "am_michael", "kokoro_voice_female": "af_heart",
               "piper_model": "", "max_speedup": 1.3},
@@ -112,8 +115,8 @@ DEFAULTS: dict[str, Any] = {
 }
 
 AGENT_PROVIDERS = ("claude", "local", "hybrid")
-RENDER_BACKENDS = ("mock", "omni-gemini", "omni-fal", "local-stickman", "local-comfyui")
-LOCAL_BACKENDS = ("local-stickman", "local-comfyui")
+RENDER_BACKENDS = ("mock", "omni-gemini", "omni-fal", "local-threejs", "local-stickman", "local-comfyui")
+LOCAL_BACKENDS = ("local-threejs", "local-stickman", "local-comfyui")
 TTS_ENGINES = ("auto", "kokoro", "piper", "none")
 
 

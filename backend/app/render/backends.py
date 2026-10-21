@@ -14,6 +14,9 @@ def get_backend(name: str) -> RenderBackend:
     if name == "omni-fal":
         from .omni_fal import OmniFalBackend
         return OmniFalBackend()
+    if name == "local-threejs":
+        from .threejs import ThreeJSBackend
+        return ThreeJSBackend()
     if name == "local-stickman":
         from .local import LocalStickmanBackend
         return LocalStickmanBackend()

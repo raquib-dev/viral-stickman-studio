@@ -1,0 +1,21 @@
+{
+  "name": "vss-renderer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "three.js animation renderer for Viral Stickman Studio: scene plan (JSON) -> deterministic frames -> mp4",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "@fontsource/inter": "5.2.5",
+    "@fontsource/jetbrains-mono": "5.2.5",
+    "playwright-core": "1.56.1",
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "vite": "5.4.11"
+  }
+}

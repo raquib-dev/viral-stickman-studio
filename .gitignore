@@ -18,6 +18,8 @@ __pycache__/
 # node
 node_modules/
 /frontend/dist/
+/renderer/dist/
+/renderer/node_modules/
 # os
 .DS_Store
 Thumbs.db

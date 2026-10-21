@@ -14,6 +14,16 @@ The skill folders must stay siblings: `yt-viral/swipe.py`, `yt-chapters/chapters
 `yt-retention/retention.py` import from `../yt-script` and `../yt-edit`; `ig-viral/swipe.py` imports
 from `../ig-reel`.
 
+## three.js renderer (`renderer/`)
+
+| Asset | Source | License |
+|---|---|---|
+| `renderer/public/models/stickman-rig.glb`: skeleton + 14 animation clips | "RobotExpressive" by Tomás Laulhé (Quaternius), with facial morphs by Don McCurdy, from the three.js repository `examples/models/gltf/RobotExpressive/` | CC0 1.0 (public domain). Its robot meshes are hidden; the stick figure and face drawn on it are this project's own |
+| three.js `0.180.0` (npm) | https://github.com/mrdoob/three.js | MIT |
+| Inter `@fontsource/inter 5.2.5` | https://rsms.me/inter/ | SIL Open Font License 1.1 |
+| JetBrains Mono `@fontsource/jetbrains-mono 5.2.5` | https://www.jetbrains.com/lp/mono/ | SIL Open Font License 1.1 |
+| playwright-core `1.56.1` (npm), drives the headless browser | https://github.com/microsoft/playwright | Apache-2.0 |
+
 ## Read-only references (not committed)
 
 `scripts/fetch_vendor.sh` clones these into the gitignored `vendor/` folder for study. No code from them

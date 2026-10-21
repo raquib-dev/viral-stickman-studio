@@ -34,5 +34,12 @@
     "4k": 0,
     "_notes": "runs on your GPU via ComfyUI"
   },
+  "local-threejs": {
+    "360p": 0,
+    "720p": 0,
+    "1080p": 0,
+    "4k": 0,
+    "_notes": "three.js renderer on your machine"
+  },
   "retry_allowance": 0.25
 }

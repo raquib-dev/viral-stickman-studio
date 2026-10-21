@@ -157,7 +157,8 @@ async def local_status() -> dict:
         stickman = {"ok": True}
     except Exception:
         stickman = {"ok": False, "error": "pip install pillow"}
-    return {"llm": {**llm, "url": s["agent"]["local"]["base_url"], "model": s["agent"]["local"]["model"]},
+    from .render.threejs import status as three_status
+    return {"threejs": three_status(), "llm": {**llm, "url": s["agent"]["local"]["base_url"], "model": s["agent"]["local"]["model"]},
             "comfyui": {**comfy, "url": s["render"]["comfyui"]["url"]}, "tts": await asyncio.to_thread(tts.available),
             "whisper": whisper, "stickman": stickman, "gpu": await asyncio.to_thread(_gpu)}
 

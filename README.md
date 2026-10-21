@@ -192,6 +192,30 @@ pip install torch --index-url https://download.pytorch.org/whl/cu128
 Then in Settings: turn **Dry run** off, Writing model → **Local LLM only** (or **Hybrid**), Render →
 **local-stickman**, Voiceover → **auto**. Local renders skip the cost gate (they cost $0).
 
+### three.js renderer (recommended local video: 3D low-poly stickman)
+
+`local-threejs` draws a 3D low-poly stick figure with expressions and a talking mouth, glowing code panels,
+stat badges, lighting and camera moves, frame by frame in a hidden browser on your GPU. It renders in
+seconds per clip, is free, and gives the same video every time. The rules it follows, and the scene-plan
+format, are in `renderer/RULES.md`.
+
+```powershell
+# Node.js 20+ from https://nodejs.org, then in the project folder:
+cd renderer
+npm install
+npm run build
+cd ..
+```
+
+Then Settings → Render → Backend **local-threejs** → Save, and Local services → **↻ Check** (the "three.js
+renderer" row turns green). On Windows it renders with Microsoft Edge, which is already installed. Try the
+demo directly: `node renderer/render.mjs --scene renderer/scenes/demo.json --out demo.mp4`.
+
+Each clip's scene comes from `projects/<slug>/scenes/clip-NN.json` if that file exists (copy
+`renderer/scenes/demo.json` as a starting point), otherwise from the beat and the voiceover by keyword.
+Edit the file, then **Regenerate this clip only**. The AI scene planner, a bigger motion library and
+AI-drawn props are the next phases.
+
 ### ComfyUI on Windows (optional: AI-generated video on your GPU)
 
 1. **Download ComfyUI portable**: https://github.com/comfyanonymous/ComfyUI/releases → latest release →

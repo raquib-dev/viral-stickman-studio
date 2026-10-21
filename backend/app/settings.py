@@ -92,7 +92,16 @@ DEFAULTS: dict[str, Any] = {
     },
     "render": {
         "comfyui": {"url": "http://127.0.0.1:8188", "t2v_workflow": "config/comfyui/wan21-t2v-1.3b.json",
-                    "i2v_workflow": "", "timeout_s": 1800, "poll_s": 3, "negative": "blurry, distorted, extra limbs, text, watermark",
+                    "i2v_workflow": "", "timeout_s": 1800, "poll_s": 3,
+                    "negative": ("photorealistic, 3D render, shading, gradients, texture, colorful background, blurry, "
+                                 "low quality, jpeg artifacts, deformed body, extra limbs, extra fingers, missing limbs, "
+                                 "fused limbs, multiple heads, text, letters, subtitles, watermark, logo, flicker, "
+                                 "jittery motion, static frame"),
+                    # sampler values filled into {{STEPS}} {{CFG}} {{SHIFT}}; Wan 1.3B is tuned for cfg 6, shift 8
+                    "steps": 30, "cfg": 6.0, "shift": 8.0,
+                    # how a 5 s generation fills a 10 s clip: smooth = motion-interpolated slow motion (+~30 s CPU
+                    # per clip), slow = plain slow motion (choppy, ~8 new frames a second)
+                    "fill": "smooth",
                     # Wan 2.1 1.3B native size; 81 frames at 16 fps = 5 s, slowed to the 10 s clip. Fits 8 GB VRAM.
                     "gen_long_side": 832, "gen_short_side": 480, "frames": 81, "fps": 16},
         "stickman": {"fps": 24},

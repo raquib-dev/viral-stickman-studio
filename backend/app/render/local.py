@@ -138,7 +138,9 @@ class ComfyUIBackend:
         url = self.cfg.get("url", "http://127.0.0.1:8188").rstrip("/")
         async with httpx.AsyncClient(base_url=url, timeout=60, transport=self._transport) as http:
             values = {"PROMPT": clean_prompt(clip.prompt), "NEGATIVE": self.cfg.get("negative", ""), "WIDTH": gw, "HEIGHT": gh,
-                      "FRAMES": frames, "FPS": fps, "SEED": random.Random(clip.index * 104729).randint(1, 2**31 - 1)}
+                      "FRAMES": frames, "FPS": fps, "SEED": random.Random(clip.index * 104729).randint(1, 2**31 - 1),
+                      "STEPS": int(self.cfg.get("steps", 30)), "CFG": float(self.cfg.get("cfg", 6.0)),
+                      "SHIFT": float(self.cfg.get("shift", 8.0))}
             try:
                 if use_i2v:
                     assert prev and prev.last_frame
@@ -179,10 +181,18 @@ class ComfyUIBackend:
         stretch = max(1.0, clip.duration / src)
         log(f"clip {clip.index + 1}: generated {src:.1f}s {info['width']}x{info['height']}; scaling to {w}x{h}"
             + (f", slowed x{stretch:.2f} to fill {clip.duration:.0f}s" if stretch > 1.01 else ""))
+        smooth = stretch > 1.01 and self.cfg.get("fill", "smooth") == "smooth"
+        # interpolate at the generated size (cheaper), then scale up
+        motion = ("minterpolate=fps=24:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1" if smooth else "fps=24")
+        if smooth:
+            log(f"clip {clip.index + 1}: interpolating in-between frames for smooth slow motion")
         await arun_ffmpeg(["-i", str(raw), "-an", "-vf",
-                           f"setpts={stretch:.4f}*PTS,scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
-                           f"fps=24,format=yuv420p", "-t", f"{clip.duration:.3f}", "-c:v", "libx264", "-preset", "veryfast",
-                           "-crf", "18", str(silent)])
+                           # interpolation drops the last frames: a constant 24 fps stream, then the final frame
+                           # held, so every clip is exactly its length and stitch timing does not drift
+                           f"setpts={stretch:.4f}*PTS,{motion},fps=24,tpad=stop_mode=clone:stop_duration=2,"
+                           f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},format=yuv420p",
+                           "-t", f"{clip.duration:.3f}", "-c:v", "libx264",
+                           "-preset", "veryfast", "-crf", "18", str(silent)], timeout=1800)
         raw.unlink(missing_ok=True)
         voice = await _voice(clip, silent, self.settings, log)
         silent.unlink(missing_ok=True)

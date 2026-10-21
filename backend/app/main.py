@@ -214,6 +214,9 @@ async def regenerate_clip(slug: str, n: int) -> dict:
     _project_or_404(slug)
     if pipeline.is_running(slug):
         raise HTTPException(409, "the pipeline is running; stop it or wait")
+    n_clips = int(_project_or_404(slug)["data"].get("duration", 60)) // 10
+    if not 1 <= n <= n_clips:
+        raise HTTPException(400, f"clip {n} does not exist (this video has {n_clips} clips)")
     job_id, _ = manager.submit(slug, "render", {"only": [n], "force": True})
     return {"job_id": job_id}
 
@@ -253,7 +256,7 @@ async def decide_gate(slug: str, name: str, body: GateDecision) -> dict:
     except (KeyError, ValueError) as e:
         raise HTTPException(400, str(e))
     if body.action == "approve":
-        pipeline.resume_after_gate(slug)
+        pipeline.resume_after_gate(slug, name)
     else:
         pl = db.get_pipeline(slug)
         if pl and pl["status"] == "waiting_gate":

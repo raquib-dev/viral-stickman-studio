@@ -12,7 +12,7 @@ from ..agent import tasks
 from ..analysis import blueprint as bp
 from ..analysis.profile import build_profile
 from ..analysis.transcript import to_srt, words_from_json, words_json
-from ..jobs import StageError, stage
+from ..jobs import JobCancelled, StageError, stage
 from ..render import captions as cap
 from ..render import stitch as st
 from ..render.backends import get_backend
@@ -119,16 +119,27 @@ async def render(ctx) -> dict:
             attempt += 1
             try:
                 res = await backend.render_clip(sp, prev if sp.continuity != "none" else None, ctx.log)
+                info = probe(res.path)  # a truncated download fails here and is retried like any render error
                 break
-            except RenderError as e:
-                ctx.log(f"clip {sp.index + 1} attempt {attempt} failed: {e}", "warn")
-                if not e.retryable or attempt > max_retries:
-                    ctx.write_json(meta_path, {"index": sp.index, "status": "failed", "backend": backend_name, "error": str(e)})
-                    raise StageError(f"clip {sp.index + 1} failed after {attempt} attempt(s): {e}") from e
+            except asyncio.CancelledError:
+                ctx.write_json(meta_path, {"index": sp.index, "status": "cancelled", "backend": backend_name})
+                raise
+            except Exception as e:
+                # download/ffmpeg/network errors used to escape the retry loop and leave the clip stuck on "rendering"
+                err = e if isinstance(e, RenderError) else RenderError(f"{type(e).__name__}: {e}")
+                ctx.log(f"clip {sp.index + 1} attempt {attempt} failed: {err}", "warn")
+                if not err.retryable or attempt > max_retries:
+                    ctx.write_json(meta_path, {"index": sp.index, "status": "failed", "backend": backend_name,
+                                               "attempts": attempt, "error": str(err)})
+                    raise StageError(f"clip {sp.index + 1} failed after {attempt} attempt(s): {err}") from e
+                try:
+                    ctx.check_cancelled()
+                except JobCancelled:
+                    ctx.write_json(meta_path, {"index": sp.index, "status": "cancelled", "backend": backend_name})
+                    raise
                 await asyncio.sleep(delay)
                 delay *= 2
         ctx.add_cost(res.cost_usd, f"clip {sp.index + 1}")
-        info = probe(res.path)
         ctx.write_json(meta_path, {"index": sp.index, "status": "done", "backend": backend_name, "attempts": attempt,
                                    "cost_usd": res.cost_usd, "interaction_id": res.interaction_id,
                                    "prompt_hash": _prompt_hash(sp.prompt), "duration": info["duration"],

@@ -21,6 +21,7 @@ from .media import last_frame
 MODEL_ID = "gemini-omni-1.1-flash"
 POLL_SECONDS = 8
 TIMEOUT_SECONDS = 15 * 60
+TERMINAL = {"completed", "failed", "cancelled", "incomplete", "expired", "requires_action"}
 
 
 class OmniGeminiBackend:
@@ -68,7 +69,9 @@ class OmniGeminiBackend:
             raise RenderError(f"create failed: {type(e).__name__}: {e}", retryable=_retryable(e)) from e
         iid = inter.id
         waited = 0
-        while getattr(inter, "status", None) in ("in_progress", None) and waited < TIMEOUT_SECONDS:
+        # anything that is not a terminal status (queued, pending, in_progress, None) means keep polling;
+        # exiting early on an unknown status used to fail the clip and start a second paid interaction
+        while getattr(inter, "status", None) not in TERMINAL and waited < TIMEOUT_SECONDS:
             await asyncio.sleep(POLL_SECONDS)
             waited += POLL_SECONDS
             try:
@@ -77,11 +80,20 @@ class OmniGeminiBackend:
                 log(f"poll error (will retry): {type(e).__name__}")
                 continue
             log(f"clip {clip.index + 1}: {inter.status} after {waited}s")
-        if inter.status != "completed":
-            raise RenderError(f"interaction {iid} ended as {inter.status}", retryable=inter.status != "cancelled")
-        video = inter.output_video
+        status = getattr(inter, "status", None)
+        if status not in TERMINAL:
+            raise RenderError(f"interaction {iid} still {status} after {TIMEOUT_SECONDS // 60} min; "
+                              "the service is slow or overloaded, try again later", retryable=False)
+        if status != "completed":
+            detail = _error_detail(inter)
+            blocked = _is_blocked(detail)
+            hint = " (the prompt was blocked by the safety filter: edit this clip's prompt in Phase B)" if blocked else ""
+            raise RenderError(f"interaction {iid} ended as {status}: {detail or 'no detail'}{hint}",
+                              retryable=status != "cancelled" and not blocked)
+        video = getattr(inter, "output_video", None)
         if video is None:
-            raise RenderError(f"interaction {iid} completed without output_video")
+            raise RenderError(f"interaction {iid} completed without output_video (usually a filtered output; "
+                              "if it keeps happening, reword this clip's prompt)")
         out = clip.out_path
         assert out is not None
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +113,19 @@ class OmniGeminiBackend:
         log(f"clip {clip.index + 1}: saved, {tokens} output tokens = ${cost:.2f}")
         return ClipResult(clip.index, out, clip.duration, cost, self.name, interaction_id=iid, last_frame=lf,
                           meta={"output_tokens": tokens, "task": task})
+
+
+def _error_detail(inter) -> str:
+    err = getattr(inter, "error", None)
+    if err is None:
+        return ""
+    msg = getattr(err, "message", None) or (err.get("message") if isinstance(err, dict) else None) or str(err)
+    return str(msg)[:300]
+
+
+def _is_blocked(detail: str) -> bool:
+    d = detail.lower()
+    return any(w in d for w in ("safety", "blocked", "policy", "prohibited", "responsible ai"))
 
 
 def _retryable(e: Exception) -> bool:

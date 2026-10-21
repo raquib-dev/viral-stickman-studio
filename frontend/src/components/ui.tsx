@@ -18,6 +18,7 @@ const STATUS: Record<string, { icon: string; label: string; color: string }> = {
   idle: { icon: "○", label: "idle", color: "var(--text-muted)" },
   pending: { icon: "⏸", label: "pending", color: "var(--serious)" },
   approved: { icon: "✓", label: "approved", color: "var(--good)" },
+  resumed: { icon: "↪", label: "resumed", color: "var(--text-muted)" },
 };
 
 export function StatusChip({ status, small }: { status: StageStatus | string; small?: boolean }) {

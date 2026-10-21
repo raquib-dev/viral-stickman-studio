@@ -24,6 +24,8 @@ GATES = {
     "phase_a": "Approve the director's Phase A",
     "render_cost": "Confirm the render cost",
 }
+# the stage whose job opens each gate (and has to run again once it is approved)
+GATE_STAGE = {"topic": "hooks", "hook": "script", "phase_a": "direction_b", "render_cost": "render"}
 
 
 def payload_hash(payload: Any) -> str:

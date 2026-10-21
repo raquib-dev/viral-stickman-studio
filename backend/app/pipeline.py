@@ -3,6 +3,8 @@ and resuming when the user decides. Every stage is still a separate, re-runnable
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 
 from . import db
 from .jobs import bus, manager
@@ -67,8 +69,17 @@ def stop(project: str) -> None:
             manager.cancel(j["id"])
 
 
-def resume_after_gate(project: str) -> dict | None:
-    """Called when a gate is approved: if the pipeline paused there, continue from that stage."""
+def resume_after_gate(project: str, gate: str | None = None) -> dict | None:
+    """Called when a gate is approved. A job started on its own (Run stage, Regenerate this clip) that
+    stopped at the gate is re-queued with its original params; otherwise, if the pipeline paused there,
+    it continues from that stage."""
+    from .gates import GATE_STAGE
+    stage_name = GATE_STAGE.get(gate or "")
+    j = db.latest_job(project, stage_name) if stage_name else None
+    if j and j["status"] == "waiting_gate" and json.loads(j["params"] or "{}").get("via") != "pipeline":
+        db.update_job(j["id"], status="resumed", finished_at=time.time())
+        job_id, _ = manager.submit(project, stage_name, json.loads(j["params"] or "{}"))
+        return {"resubmitted_job": job_id}
     p = db.get_pipeline(project)
     if p and p["status"] == "waiting_gate" and not is_running(project):
         return start(project, p["current_stage"], p["to_stage"])

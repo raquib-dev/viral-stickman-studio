@@ -15,13 +15,17 @@ VO_LEAD = 0.4   # seconds before the narrator starts inside a clip (kino's voSta
 VO_TAIL = 0.6
 
 
-def estimate_words(clip_vos: list[str], clip_seconds: float = 10.0) -> list[Word]:
+def estimate_words(clip_vos: list[str], clip_seconds: float = 10.0, durations: list[float] | None = None) -> list[Word]:
+    """durations: each clip's real length (generated clips are not always exactly clip_seconds)."""
     words: list[Word] = []
+    offset = 0.0
     for i, vo in enumerate(clip_vos):
+        length = durations[i] if durations and i < len(durations) and durations[i] > 0 else clip_seconds
+        clip_start, offset = offset, offset + length
         toks = vo.split()
         if not toks:
             continue
-        start, end = i * clip_seconds + VO_LEAD, (i + 1) * clip_seconds - VO_TAIL
+        start, end = clip_start + VO_LEAD, clip_start + length - VO_TAIL
         weights = [len(t) + 2 + (3 if t[-1:] in ",.;:!?" else 0) for t in toks]
         total = sum(weights)
         t = start
@@ -32,14 +36,21 @@ def estimate_words(clip_vos: list[str], clip_seconds: float = 10.0) -> list[Word
     return words
 
 
-def whisper_words(audio_or_video: Path) -> list[Word] | None:
+def whisper_words(audio_or_video: Path, log=None) -> list[Word] | None:
+    """None when faster-whisper is missing or fails (model download, broken install): captions fall back to
+    the estimate instead of failing the stitch."""
     try:
         from faster_whisper import WhisperModel  # optional dependency
     except Exception:
         return None
-    model = WhisperModel("base.en", device="cpu", compute_type="int8")
-    segs, _ = model.transcribe(str(audio_or_video), word_timestamps=True)
-    out = [Word(w.word.strip(), float(w.start), float(w.end)) for s in segs for w in (s.words or []) if w.word.strip()]
+    try:
+        model = WhisperModel("base.en", device="cpu", compute_type="int8")
+        segs, _ = model.transcribe(str(audio_or_video), word_timestamps=True)
+        out = [Word(w.word.strip(), float(w.start), float(w.end)) for s in segs for w in (s.words or []) if w.word.strip()]
+    except Exception as e:
+        if log:
+            log(f"faster-whisper failed ({type(e).__name__}: {str(e)[:200]}); using estimated caption timing", "warn")
+        return None
     return out or None
 
 

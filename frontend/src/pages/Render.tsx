@@ -76,7 +76,7 @@ export default function Render() {
               <dl className="grid grid-cols-[140px_1fr] gap-y-1">
                 <dt className="text-ink-3">Duration</dt><dd>{loud.duration.toFixed(1)} s</dd>
                 <dt className="text-ink-3">Size</dt><dd>{loud.width}×{loud.height}</dd>
-                <dt className="text-ink-3">Loudness</dt><dd>{loud.after_i.toFixed(1)} LUFS (target {loud.target_i}), true peak {loud.after_tp.toFixed(1)} dBTP</dd>
+                <dt className="text-ink-3">Loudness</dt><dd>{loud.after_i != null ? <>{loud.after_i.toFixed(1)} LUFS (target {loud.target_i}), true peak {loud.after_tp.toFixed(1)} dBTP</> : loud.skipped ?? "not measured"}</dd>
                 <dt className="text-ink-3">Caption timing</dt><dd>{loud.caption_timing}</dd>
                 <dt className="text-ink-3">Safe zone</dt><dd>{loud.safe_zone_violations.length ? loud.safe_zone_violations.join("; ") : "✓ all text inside the safe zone"}</dd>
               </dl>

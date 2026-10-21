@@ -165,18 +165,20 @@ async def stitch_stage(ctx) -> dict:
     stitched = ctx.path("final/stitched.mp4")
     await th(st.concat, clips, stitched, p["ratio"], res_name if res_name != "4k" else "1080p")
     ctx.progress(0.35, "concatenated")
-    backend_used = json.loads(ctx.path("clips/clip-01.json").read_text()).get("backend", "mock")
+    lengths = [(i := probe(c))["video_duration"] or i["duration"] for c in clips]
+    starts = [sum(lengths[:k]) for k in range(len(lengths))]
+    backend_used = ctx.read_json("clips/clip-01.json", default={}).get("backend", "mock")
     words, method = None, "estimate"
     if backend_used != "mock":
-        words = await th(cap.whisper_words, stitched)
-        method = "faster-whisper" if words else "estimate (faster-whisper not installed)"
+        words = await th(cap.whisper_words, stitched, ctx.log)
+        method = "faster-whisper" if words else "estimate (faster-whisper not installed or failed)"
     if not words:
-        words = cap.estimate_words([c["vo"] for c in s["clips"]])
+        words = cap.estimate_words([c["vo"] for c in s["clips"]], durations=lengths)
     ctx.write_json("final/words.json", {"method": method, "words": words_json(words)})
     ctx.write_text("final/final.srt", to_srt(words))
     # the on-screen card you approved at the hook gate wins over the director's suggestion
     hook_card = s["hook"].get("write") or a.get("hook_card")
-    callouts = [{"t": (o["clip"] - 1) * 10 + 3.0, "text": o["text"], "hold": 2.2} for o in a.get("overlays", [])
+    callouts = [{"t": starts[min(o["clip"], n) - 1] + 3.0, "text": o["text"], "hold": 2.2} for o in a.get("overlays", [])
                 if o.get("clip", 1) != 1 and o.get("text")]
     ass, violations = cap.build_ass(words, p["ratio"], w, h, hook_card=hook_card, callouts=callouts,
                                     words_per_page=int(ctx.settings["captions"].get("words_per_page", 3)),
@@ -193,8 +195,11 @@ async def stitch_stage(ctx) -> dict:
     from ..render.media import run_ffmpeg
     await th(run_ffmpeg, ["-ss", "1.2", "-i", str(ctx.path("final/final.mp4")), "-frames:v", "1", str(ctx.path("final/poster.png"))])
     ctx.write_json("final/loudness.json", {**report, **info, "caption_timing": method, "safe_zone_violations": violations})
-    ctx.log(f"final.mp4: {info['duration']:.1f}s {info['width']}x{info['height']}, {report['after_i']:.1f} LUFS "
-            f"(target {report['target_i']}), captions timed by {method}")
+    loud_txt = (f"{report['after_i']:.1f} LUFS (target {report['target_i']})" if report.get("after_i") is not None
+                else "audio is silent, loudness not normalised")
+    if report.get("skipped"):
+        ctx.log("loudness: " + report["skipped"] + " (the clips have no sound; check the render prompts' audio lines)", "warn")
+    ctx.log(f"final.mp4: {info['duration']:.1f}s {info['width']}x{info['height']}, {loud_txt}, captions timed by {method}")
     return {"outputs": ["final/final.mp4", "final/poster.png", "final/final.srt", "final/captions.ass", "final/words.json", "final/loudness.json"]}
 
 

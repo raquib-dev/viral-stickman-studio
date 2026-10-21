@@ -269,7 +269,7 @@ class JobManager:
             ctx.log(f"failed: {e}", "error")
         except Exception as e:  # keep the worker alive; full trace goes to the job log
             status, error = "failed", f"{type(e).__name__}: {e}"
-            ctx.log("failed: " + redact(traceback.format_exc()[-2000:]), "error")
+            ctx.log("failed: " + redact(traceback.format_exc()[-6000:]), "error")
         finally:
             self._contexts.pop(job_id, None)
         db.update_job(job_id, status=status, finished_at=time.time(), error=error)

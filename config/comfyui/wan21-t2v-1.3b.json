@@ -1,0 +1,14 @@
+{
+  "_comment": "ComfyUI API-format workflow for Wan 2.1 T2V 1.3B (fits 8 GB VRAM). Model file names must match your ComfyUI/models folders (diffusion_models, text_encoders, vae). Placeholders filled by the app: {{PROMPT}} {{NEGATIVE}} {{WIDTH}} {{HEIGHT}} {{FRAMES}} {{FPS}} {{SEED}}. To use your own workflow: in ComfyUI enable dev mode, Save (API format), then put the placeholders in place of the values.",
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "wan2.1_t2v_1.3B_fp16.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
+  "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 8.0}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{PROMPT}}", "clip": ["2", 0]}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{NEGATIVE}}", "clip": ["2", 0]}},
+  "7": {"class_type": "EmptyHunyuanLatentVideo", "inputs": {"width": "{{WIDTH}}", "height": "{{HEIGHT}}", "length": "{{FRAMES}}", "batch_size": 1}},
+  "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0],
+        "seed": "{{SEED}}", "steps": 30, "cfg": 6.0, "sampler_name": "uni_pc", "scheduler": "simple", "denoise": 1.0}},
+  "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+  "10": {"class_type": "SaveWEBM", "inputs": {"images": ["9", 0], "filename_prefix": "vss/clip", "codec": "vp9", "fps": "{{FPS}}", "crf": 24}}
+}

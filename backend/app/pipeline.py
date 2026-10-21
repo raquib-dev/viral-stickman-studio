@@ -21,6 +21,9 @@ _stop: dict[str, bool] = {}
 def stage_status(project: str) -> list[dict]:
     """Latest job per stage, plus staleness: a stage is stale when an earlier stage succeeded after it."""
     out, upstream_done = [], 0.0
+    runs: dict[str, int] = {}
+    for jj in db.list_jobs(project, 2000):
+        runs[jj["stage"]] = runs.get(jj["stage"], 0) + 1
     for s in ALL_STAGES:
         j = db.latest_job(project, s)
         st = j["status"] if j else "not_run"
@@ -28,7 +31,8 @@ def stage_status(project: str) -> list[dict]:
         stale = bool(j and st == "succeeded" and s != "learn" and upstream_done > finished + 1e-6)
         out.append({"stage": s, "status": "stale" if stale else st, "job_id": j and j["id"],
                     "progress": j and j["progress"], "message": j and j["message"], "cost_usd": j and j["cost_usd"],
-                    "finished_at": finished or None, "error": j and j["error"]})
+                    "finished_at": finished or None, "error": j and j["error"], "started_at": j and j["started_at"],
+                    "runs": runs.get(s, 0)})
         if s != "learn" and j and st == "succeeded":
             upstream_done = max(upstream_done, finished)
     return out

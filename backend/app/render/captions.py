@@ -36,7 +36,18 @@ def estimate_words(clip_vos: list[str], clip_seconds: float = 10.0, durations: l
     return words
 
 
-def whisper_words(audio_or_video: Path, log=None) -> list[Word] | None:
+def whisper_device(device: str = "auto") -> tuple[str, str]:
+    """(device, compute_type). auto = the GPU when CTranslate2 sees CUDA, else the CPU."""
+    if device == "auto":
+        try:
+            import ctranslate2
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        except Exception:
+            device = "cpu"
+    return device, ("float16" if device == "cuda" else "int8")
+
+
+def whisper_words(audio_or_video: Path, log=None, model_name: str = "base.en", device: str = "auto") -> list[Word] | None:
     """None when faster-whisper is missing or fails (model download, broken install): captions fall back to
     the estimate instead of failing the stitch."""
     try:
@@ -44,7 +55,10 @@ def whisper_words(audio_or_video: Path, log=None) -> list[Word] | None:
     except Exception:
         return None
     try:
-        model = WhisperModel("base.en", device="cpu", compute_type="int8")
+        dev, compute = whisper_device(device)
+        if log:
+            log(f"faster-whisper {model_name} on {dev} ({compute})")
+        model = WhisperModel(model_name, device=dev, compute_type=compute)
         segs, _ = model.transcribe(str(audio_or_video), word_timestamps=True)
         out = [Word(w.word.strip(), float(w.start), float(w.end)) for s in segs for w in (s.words or []) if w.word.strip()]
     except Exception as e:

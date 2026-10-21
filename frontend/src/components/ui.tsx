@@ -19,6 +19,9 @@ const STATUS: Record<string, { icon: string; label: string; color: string }> = {
   pending: { icon: "⏸", label: "pending", color: "var(--serious)" },
   approved: { icon: "✓", label: "approved", color: "var(--good)" },
   resumed: { icon: "↪", label: "resumed", color: "var(--text-muted)" },
+  rendering: { icon: "◐", label: "rendering", color: "var(--accent)" },
+  retrying: { icon: "↻", label: "retrying", color: "var(--serious)" },
+  done: { icon: "✓", label: "done", color: "var(--good)" },
 };
 
 export function StatusChip({ status, small }: { status: StageStatus | string; small?: boolean }) {
@@ -117,3 +120,10 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
 
 export const fmtUsd = (n: number | null | undefined) => `$${(n ?? 0).toFixed(2)}`;
 export const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+export function fmtDur(sec: number | null | undefined): string {
+  if (sec == null || !isFinite(sec) || sec < 0) return "—";
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return m < 60 ? `${m}m ${String(s).padStart(2, "0")}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}

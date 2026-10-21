@@ -9,11 +9,12 @@ interface Ctx {
   connected: boolean;
   refresh: () => Promise<void>;
   version: number; // bumps whenever a job finishes, so pages re-read their files
+  clipTick: number; // bumps on every live clip update (status, attempt, step)
   error: string | null;
 }
 
 const ProjectCtx = createContext<Ctx>({ slug: null, snap: null, meta: null, logs: [], connected: false,
-  refresh: async () => {}, version: 0, error: null });
+  refresh: async () => {}, version: 0, clipTick: 0, error: null });
 
 export function ProjectProvider({ slug, children }: { slug: string | null; children: React.ReactNode }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -21,6 +22,7 @@ export function ProjectProvider({ slug, children }: { slug: string | null; child
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [connected, setConnected] = useState(false);
   const [version, setVersion] = useState(0);
+  const [clipTick, setClipTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
@@ -55,10 +57,11 @@ export function ProjectProvider({ slug, children }: { slug: string | null; child
       soon();
     };
     for (const t of ["job", "progress", "pipeline", "gate", "cost"]) es.addEventListener(t, onChange);
+    es.addEventListener("clip", () => setClipTick((v) => v + 1));
     return () => { es.close(); setConnected(false); };
   }, [slug, refresh, soon]);
 
-  return <ProjectCtx.Provider value={{ slug, snap, meta, logs, connected, refresh, version, error }}>{children}</ProjectCtx.Provider>;
+  return <ProjectCtx.Provider value={{ slug, snap, meta, logs, connected, refresh, version, clipTick, error }}>{children}</ProjectCtx.Provider>;
 }
 
 export const useProject = () => useContext(ProjectCtx);
@@ -78,4 +81,11 @@ export function useProjectFile<T>(rel: string | null): [T | null, boolean, () =>
     return () => { live = false; };
   }, [slug, rel, version, tick]);
   return [data, loading, () => setTick((t) => t + 1)];
+}
+
+/** Re-render every `ms` (for live elapsed timers). */
+export function useNow(ms = 1000): number {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => { const t = window.setInterval(() => setNow(Date.now() / 1000), ms); return () => window.clearInterval(t); }, [ms]);
+  return now;
 }

@@ -10,3 +10,5 @@ fal-client>=1.0.3
 # optional extras (install yourself if you want them):
 #   yt-dlp          public auto-captions for discovery transcripts
 #   faster-whisper  word-accurate caption timing from the rendered audio
+#   kokoro soundfile   local voiceover for local video backends (or: piper-tts)
+pillow>=10            # local-stickman animator

@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 
 from .. import db
@@ -12,14 +13,14 @@ from ..agent import tasks
 from ..analysis import blueprint as bp
 from ..analysis.profile import build_profile
 from ..analysis.transcript import to_srt, words_from_json, words_json
-from ..jobs import JobCancelled, StageError, stage
+from ..jobs import JobCancelled, StageError, bus, stage
 from ..render import captions as cap
 from ..render import stitch as st
 from ..render.backends import get_backend
 from ..render.base import ClipResult, ClipSpec, RenderError
 from ..render.cost import PricingUnknown, clip_cost, estimate, within_budget
 from ..render.media import dims, probe
-from ..settings import load_pricing
+from ..settings import LOCAL_BACKENDS, load_pricing
 from ..tools import runner as tools
 from .common import fmt_for_project, split_sentences, th
 
@@ -41,8 +42,59 @@ def _clip_specs(ctx, p: dict) -> list[ClipSpec]:
                               continuity=r.get("continuity", "first_frame") if k else "none",
                               out_path=ctx.path(f"clips/clip-{k + 1:02d}.mp4"),
                               label=a["rows"][k]["purpose"] if k < len(a["rows"]) else "",
-                              vo=s["clips"][k]["vo"] if k < len(s["clips"]) else ""))
+                              vo=s["clips"][k]["vo"] if k < len(s["clips"]) else "",
+                              theme=p.get("theme", "dark"), voice_pref=p.get("voice_pref", "male")))
     return specs
+
+
+def _fmt_eta(sec: float) -> str:
+    return f"{sec / 60:.0f} min" if sec >= 90 else f"{sec:.0f} s"
+
+
+class ClipTracker:
+    """Live state of one clip in clips/clip-NN.json: status, attempt N of M, the step it is on, every
+    attempt's error and timing. Each write is pushed to the UI as a 'clip' event."""
+
+    def __init__(self, ctx, index: int, backend: str, max_attempts: int):
+        self.ctx, self.index, self.rel = ctx, index, f"clips/clip-{index + 1:02d}.json"
+        old = ctx.read_json(self.rel, default={}) if ctx.path(self.rel).exists() else {}
+        # the last good render stays visible on the card while a regenerate runs (or if it fails)
+        previous = old if old.get("status") == "done" else old.get("previous")
+        self.m: dict = {"index": index, "backend": backend, "max_attempts": max_attempts, "attempt": 0, "history": [],
+                        "job_id": ctx.job_id, "previous": previous}
+        self._t0 = 0.0
+
+    def _save(self, **f) -> None:
+        self.m.update(f, updated_at=time.time())
+        self.ctx.write_json(self.rel, self.m)
+        bus.publish(self.ctx.project, {"type": "clip", "job_id": self.ctx.job_id, "clip": self.index + 1,
+                                       "status": self.m.get("status"), "step": self.m.get("step")})
+
+    def queued(self) -> None:
+        self._save(status="queued", step="waiting for its turn", queued_at=time.time())
+
+    def attempt_start(self, n: int) -> None:
+        self._t0 = time.time()
+        self._save(status="rendering" if n == 1 else "retrying", attempt=n, step="starting",
+                   started_at=self.m.get("started_at") or self._t0, attempt_started_at=self._t0)
+
+    def log(self, text: str, level: str = "info") -> None:
+        self.ctx.log(text, level)
+        self._save(step=str(text)[:200])
+
+    def attempt_failed(self, error: str, retry_in: float | None, retryable: bool) -> None:
+        self.m["history"].append({"attempt": self.m["attempt"], "ok": False, "error": error[:500], "retryable": retryable,
+                                  "seconds": round(time.time() - self._t0, 1), "at": time.time()})
+        self._save(step=f"attempt {self.m['attempt']} failed" + (f"; retrying in {retry_in:.0f} s" if retry_in else ""),
+                   last_error=error[:500])
+
+    def finish(self, status: str, error: str | None = None, **f) -> None:
+        if status == "done":
+            self.m["history"].append({"attempt": self.m["attempt"], "ok": True, "seconds": round(time.time() - self._t0, 1),
+                                      "at": time.time()})
+            self.m["previous"] = None
+        self._save(status=status, step=status if not error else error[:200], error=error, attempts=self.m["attempt"],
+                   finished_at=time.time(), render_seconds=round(time.time() - (self.m.get("started_at") or time.time()), 1), **f)
 
 
 def render_spend(project: str) -> float:
@@ -91,7 +143,8 @@ async def render(ctx) -> dict:
                          auto_reason=(f"estimate ${est.max_usd:.2f} (incl. retry allowance) within cap ${cap_usd:.2f}"
                                       if within else f"estimate ${est.max_usd:.2f} + spent ${spent:.2f} exceeds cap ${cap_usd:.2f}"))
     else:
-        ctx.log(f"{backend_name}: free placeholder clips, no cost gate needed")
+        ctx.log(f"{backend_name}: $0 ({'runs on this machine' if backend_name in LOCAL_BACKENDS else 'placeholder clips'}), "
+                "no cost gate needed")
     try:
         backend = get_backend(backend_name)
     except RenderError as e:
@@ -105,37 +158,45 @@ async def render(ctx) -> dict:
             prev = ClipResult(todo[0].index - 1, ctx.path(f"clips/clip-{todo[0].index:02d}.mp4"), 10.0, 0.0, backend_name,
                               interaction_id=pm.get("interaction_id"), last_frame=prev_png)
     max_retries = int(r.get("max_retries", 2))
+    trackers = {sp.index: ClipTracker(ctx, sp.index, backend_name, max_retries + 1) for sp in todo}
+    for t in trackers.values():
+        t.queued()
+    t_job = time.time()
     for n, sp in enumerate(todo):
         ctx.check_cancelled()
+        tr = trackers[sp.index]
         nxt = clip_cost(pricing, backend_name, sp.resolution, sp.duration)
         spent = render_spend(ctx.project)
         if not within_budget(spent, nxt, cap_usd):
             ctx.log(f"budget cap reached: spent ${spent:.2f}, next clip ${nxt:.2f}, cap ${cap_usd:.2f}. Stopping.", "error")
+            tr.finish("failed", error="budget cap reached")
             raise StageError("budget cap reached; raise it in Settings or regenerate fewer clips")
-        meta_path = f"clips/clip-{sp.index + 1:02d}.json"
-        ctx.write_json(meta_path, {"index": sp.index, "status": "rendering", "backend": backend_name})
+        ctx.progress(n / len(todo), f"clip {sp.index + 1} rendering ({n + 1}/{len(todo)})")
         attempt, delay = 0, 5.0
         while True:
             attempt += 1
+            tr.attempt_start(attempt)
             try:
-                res = await backend.render_clip(sp, prev if sp.continuity != "none" else None, ctx.log)
+                res = await backend.render_clip(sp, prev if sp.continuity != "none" else None, tr.log)
                 info = probe(res.path)  # a truncated download fails here and is retried like any render error
                 break
-            except asyncio.CancelledError:
-                ctx.write_json(meta_path, {"index": sp.index, "status": "cancelled", "backend": backend_name})
+            except (asyncio.CancelledError, JobCancelled):
+                tr.finish("cancelled", error="cancelled by you")
                 raise
             except Exception as e:
                 # download/ffmpeg/network errors used to escape the retry loop and leave the clip stuck on "rendering"
                 err = e if isinstance(e, RenderError) else RenderError(f"{type(e).__name__}: {e}")
                 ctx.log(f"clip {sp.index + 1} attempt {attempt} failed: {err}", "warn")
-                if not err.retryable or attempt > max_retries:
-                    ctx.write_json(meta_path, {"index": sp.index, "status": "failed", "backend": backend_name,
-                                               "attempts": attempt, "error": str(err)})
-                    raise StageError(f"clip {sp.index + 1} failed after {attempt} attempt(s): {err}") from e
+                will_retry = err.retryable and attempt <= max_retries
+                tr.attempt_failed(str(err), retry_in=delay if will_retry else None, retryable=err.retryable)
+                if not will_retry:
+                    tr.finish("failed", error=str(err))
+                    why = "" if err.retryable else " (not retried: retrying would fail the same way)"
+                    raise StageError(f"clip {sp.index + 1} failed after {attempt} attempt(s): {err}{why}") from e
                 try:
                     ctx.check_cancelled()
                 except JobCancelled:
-                    ctx.write_json(meta_path, {"index": sp.index, "status": "cancelled", "backend": backend_name})
+                    tr.finish("cancelled", error="cancelled by you")
                     raise
                 await asyncio.sleep(delay)
                 delay *= 2
@@ -144,13 +205,14 @@ async def render(ctx) -> dict:
         if not ratio_ok:
             ctx.log(f"clip {sp.index + 1} came back {info['width']}x{info['height']}, not {sp.ratio}; stitch will crop it "
                     "to fill the frame, or regenerate it", "warn")
-        ctx.write_json(meta_path, {"index": sp.index, "status": "done", "backend": backend_name, "attempts": attempt,
-                                   "cost_usd": res.cost_usd, "interaction_id": res.interaction_id,
-                                   "prompt_hash": _prompt_hash(sp.prompt), "duration": info["duration"],
-                                   "width": info["width"], "height": info["height"], "has_audio": info["has_audio"],
-                                   "ratio_ok": ratio_ok, "continuity": sp.continuity, "meta": res.meta})
+        tr.finish("done", cost_usd=res.cost_usd, interaction_id=res.interaction_id, prompt_hash=_prompt_hash(sp.prompt),
+                  duration=info["duration"], width=info["width"], height=info["height"], has_audio=info["has_audio"],
+                  ratio_ok=ratio_ok, continuity=sp.continuity, meta=res.meta)
         prev = res
-        ctx.progress((n + 1) / len(todo), f"clip {sp.index + 1} done ({n + 1}/{len(todo)})")
+        avg = (time.time() - t_job) / (n + 1)
+        left = len(todo) - n - 1
+        ctx.progress((n + 1) / len(todo), f"clip {sp.index + 1} done ({n + 1}/{len(todo)})"
+                     + (f", ~{_fmt_eta(avg * left)} left" if left else ""))
     return {"outputs": ["clips/"]}
 
 
@@ -178,7 +240,8 @@ async def stitch_stage(ctx) -> dict:
     backend_used = ctx.read_json("clips/clip-01.json", default={}).get("backend", "mock")
     words, method = None, "estimate"
     if backend_used != "mock":
-        words = await th(cap.whisper_words, stitched, ctx.log)
+        cs = ctx.settings["captions"]
+        words = await th(cap.whisper_words, stitched, ctx.log, cs.get("whisper_model", "base.en"), cs.get("whisper_device", "auto"))
         method = "faster-whisper" if words else "estimate (faster-whisper not installed or failed)"
     if not words:
         words = cap.estimate_words([c["vo"] for c in s["clips"]], durations=lengths)

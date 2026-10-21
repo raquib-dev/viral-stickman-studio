@@ -35,11 +35,16 @@ export async function getFile<T>(slug: string, rel: string): Promise<T | null> {
   return (ct.includes("json") ? r.json() : r.text()) as Promise<T>;
 }
 
-export type StageStatus = "not_run" | "queued" | "running" | "succeeded" | "failed" | "waiting_gate" | "cancelled" | "interrupted" | "stale";
+export type StageStatus = "not_run" | "queued" | "running" | "succeeded" | "failed" | "waiting_gate" | "cancelled" | "interrupted" | "stale" | "resumed";
 
 export interface StageRow {
   stage: string; status: StageStatus; job_id: number | null; progress: number | null; message: string | null;
-  cost_usd: number | null; finished_at: number | null; error: string | null;
+  cost_usd: number | null; finished_at: number | null; error: string | null; started_at: number | null; runs: number;
+}
+export interface Job {
+  id: number; project: string; stage: string; status: string; created_at: number; started_at: number | null;
+  finished_at: number | null; progress: number; message: string | null; cost_usd: number; error: string | null;
+  params: Record<string, any>;
 }
 export interface Gate {
   name: string; status: "pending" | "approved" | "rejected"; payload_hash: string; choice: unknown; note: string | null;

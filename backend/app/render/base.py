@@ -17,6 +17,8 @@ class ClipSpec:
     out_path: Path | None = None
     label: str = ""
     vo: str = ""
+    theme: str = "dark"           # local backends draw/voice from these; API backends read the prompt
+    voice_pref: str = "male"
 
 
 @dataclass
@@ -37,7 +39,7 @@ class RenderError(RuntimeError):
         self.retryable = retryable
 
 
-Log = Callable[[str], None]
+Log = Callable[..., None]  # log(text, level="info")
 
 
 class RenderBackend(Protocol):

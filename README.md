@@ -155,7 +155,62 @@ unverified, so the app refuses to estimate them until you add a rate.
 
 ---
 
-## 4. Which skill or tool runs each stage
+## 4. Local mode (your GPU, $0 per video)
+
+Every AI piece has an API option and a local option. Pick them in **Settings**; the **Local services**
+panel there checks what is installed and running, and tells you the command for anything missing.
+The sidebar shows **LOCAL ($0)** when both writing and video run locally.
+
+| Piece | API option | Local option | Setting |
+|---|---|---|---|
+| Writing (research, scripts, direction) | Claude Agent SDK | Any OpenAI-compatible server: **Ollama** or LM Studio with `qwen3:8b` (about 5 GB, fits 8 GB VRAM). **Hybrid** keeps Claude for Phase A/B only | Writing model → Provider |
+| Video | omni-fal, omni-gemini | **local-stickman**: built-in animator, needs only ffmpeg + Pillow, about 8 s per clip on a laptop CPU. **local-comfyui**: Wan 2.1 1.3B / LTX-Video in ComfyUI on your GPU | Render → Backend |
+| Voiceover (local video only; Omni speaks on its own) | — | **Kokoro-82M** (`pip install kokoro soundfile`, Apache-2.0) or **Piper** (`pip install piper-tts` + a voice `.onnx`, MIT) | Voice and captions |
+| Caption timing | — | faster-whisper, on the GPU when CTranslate2 sees CUDA | Voice and captions |
+
+Setup for an RTX 5050 laptop (8 GB):
+
+```powershell
+# writing: Ollama from https://ollama.com, then
+ollama pull qwen3:8b
+# voice + captions (in the app's venv)
+pip install kokoro soundfile faster-whisper
+# RTX 50-series needs PyTorch built for CUDA 12.8 or newer:
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+
+Then in Settings: turn **Dry run** off, Writing model → **Local LLM only** (or **Hybrid**), Render →
+**local-stickman**, Voiceover → **auto**. Local renders skip the cost gate (they cost $0).
+
+**ComfyUI (optional, AI-generated video on your GPU):** install ComfyUI, download the Wan 2.1 T2V 1.3B
+files (`wan2.1_t2v_1.3B_fp16.safetensors`, `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`)
+into its `models/diffusion_models`, `models/text_encoders` and `models/vae` folders, start it, and pick
+**local-comfyui**. The app fills `config/comfyui/wan21-t2v-1.3b.json` (ComfyUI API format, with
+`{{PROMPT}}`, `{{WIDTH}}`, `{{HEIGHT}}`, `{{FRAMES}}`, `{{FPS}}`, `{{SEED}}`; `{{IMAGE}}` for an image-to-video
+workflow). To use your own workflow, export it with *Save (API format)* and put the placeholders in.
+Wan 1.3B makes about 5 s (81 frames at 16 fps) at 832×480; the app crops it to your ratio and slows it to
+fill the 10 s clip. It takes minutes per clip on an 8 GB laptop GPU, and has no sound, so the local
+voiceover is added. Out-of-memory errors are shown on the clip card and are not retried: lower Frames or
+the generation size.
+
+**Honest limits.** A local 8B model writes noticeably weaker hooks and much weaker Phase A/B direction
+than Claude: use Hybrid if you can. local-stickman draws simple, consistent figures from keywords in
+each beat. It does not follow the Phase B prompt word for word the way Omni does. ComfyUI video drifts
+more between clips than Omni.
+
+### Watching a run
+
+- **Pipeline strip:** live elapsed time per stage, how many times each stage ran (×N), and the last
+  error on hover. When a stage fails, a red line shows the error, and the button becomes **Resume from
+  <stage>** (finished stages are kept).
+- **Render:** every clip card shows *queued / rendering / retrying / done / failed*, the attempt
+  (try 2/3), the step it is on, and a live timer. Each card keeps an attempt history with each error and
+  how long it took. While a clip regenerates, or if the regenerate fails, its last good render stays
+  visible. The header counts done clips, attempts and failures, with an ETA.
+- **Activity** (sidebar): every job with its parameters (*clip 6 only*), duration, cost and error.
+  Click one for its full log, filtered by level, and **Retry this job** or **Cancel**.
+
+## 5. Which skill or tool runs each stage
 
 | Stage | Vendored skill (via Claude Agent SDK) | Pack tool (run directly) | Output |
 |---|---|---|---|
@@ -182,7 +237,7 @@ Design documents:
 
 ---
 
-## 5. Tests
+## 6. Tests
 
 ```powershell
 pip install -r requirements-dev.txt
@@ -201,7 +256,7 @@ video elements and posters, not playback. Chrome, Edge and Firefox play the clip
 
 ---
 
-## 6. Known limits (read this)
+## 7. Known limits (read this)
 
 - **`hookscore.py` is a heuristic, not a predictor.** By its authors' own measurement it separates
   deliberately bad hooks from real ones well (AUC 0.83) and a creator's hits from their misses barely

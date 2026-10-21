@@ -78,8 +78,36 @@ def ffprobe_bin() -> str:
 
 # ---- non-secret settings -------------------------------------------------------------------
 
+# Defaults for keys added after a settings.json was written, so older files keep working unchanged.
+DEFAULTS: dict[str, Any] = {
+    "agent": {
+        # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
+        # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
+        "provider": "claude",
+        "max_attempts": 3,
+        "local": {"base_url": "http://localhost:11434/v1", "model": "qwen3:8b", "temperature": 0.4,
+                  "max_tokens": 8192, "timeout_s": 900, "skill_chars": 14000},
+    },
+    "render": {
+        "comfyui": {"url": "http://127.0.0.1:8188", "t2v_workflow": "config/comfyui/wan21-t2v-1.3b.json",
+                    "i2v_workflow": "", "timeout_s": 1800, "poll_s": 3, "negative": "blurry, distorted, extra limbs, text, watermark",
+                    # Wan 2.1 1.3B native size; 81 frames at 16 fps = 5 s, slowed to the 10 s clip. Fits 8 GB VRAM.
+                    "gen_long_side": 832, "gen_short_side": 480, "frames": 81, "fps": 16},
+        "stickman": {"fps": 24},
+    },
+    "voice": {"tts": "auto", "kokoro_voice_male": "am_michael", "kokoro_voice_female": "af_heart",
+              "piper_model": "", "max_speedup": 1.3},
+    "captions": {"whisper_model": "base.en", "whisper_device": "auto"},
+}
+
+AGENT_PROVIDERS = ("claude", "local", "hybrid")
+RENDER_BACKENDS = ("mock", "omni-gemini", "omni-fal", "local-stickman", "local-comfyui")
+LOCAL_BACKENDS = ("local-stickman", "local-comfyui")
+TTS_ENGINES = ("auto", "kokoro", "piper", "none")
+
+
 def load_settings() -> dict[str, Any]:
-    return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    return _deep_merge(DEFAULTS, json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
 
 
 def save_settings(new: dict[str, Any]) -> dict[str, Any]:
@@ -94,8 +122,16 @@ def validate_settings(s: dict[str, Any]) -> None:
     for k in s:
         if k.upper() in SECRET_NAMES or "key" in k.lower():
             raise ValueError("secrets belong in .env, not settings")
-    if s["render"]["backend"] not in ("mock", "omni-gemini", "omni-fal"):
+    if s["render"]["backend"] not in RENDER_BACKENDS:
         raise ValueError("unknown render backend")
+    if s["agent"]["provider"] not in AGENT_PROVIDERS:
+        raise ValueError("agent provider must be claude, local or hybrid")
+    if not str(s["agent"]["local"]["base_url"]).startswith(("http://", "https://")):
+        raise ValueError("local LLM URL must start with http:// or https://")
+    if s["voice"]["tts"] not in TTS_ENGINES:
+        raise ValueError("unknown TTS engine")
+    if not 1 <= int(s["agent"]["max_attempts"]) <= 6:
+        raise ValueError("agent attempts must be 1-6")
     if s["render"]["resolution"] not in ("360p", "720p", "1080p", "4k"):
         raise ValueError("unknown resolution")
     if float(s["render"]["budget_cap_usd"]) < 0:

@@ -14,4 +14,10 @@ def get_backend(name: str) -> RenderBackend:
     if name == "omni-fal":
         from .omni_fal import OmniFalBackend
         return OmniFalBackend()
+    if name == "local-stickman":
+        from .local import LocalStickmanBackend
+        return LocalStickmanBackend()
+    if name == "local-comfyui":
+        from .local import ComfyUIBackend
+        return ComfyUIBackend()
     raise ValueError(f"unknown render backend {name!r}")

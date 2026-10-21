@@ -142,5 +142,25 @@ class FixtureAgent:
         return data
 
 
+class HybridAgent:
+    """Claude for direction (the hardest, highest-leverage writing), the local model for the rest."""
+    kind = "hybrid (Claude direction + local LLM)"
+
+    def __init__(self, settings: dict):
+        from .local import LocalAgent
+        self.claude, self.local = SdkAgent(settings), LocalAgent(settings)
+
+    async def run(self, task: AgentTask, ctx) -> dict:
+        return await (self.claude if task.model_key == "direction" else self.local).run(task, ctx)
+
+
 def get_agent(settings: dict):
-    return FixtureAgent(settings) if settings.get("dry_run", True) else SdkAgent(settings)
+    if settings.get("dry_run", True):
+        return FixtureAgent(settings)
+    provider = settings.get("agent", {}).get("provider", "claude")
+    if provider == "local":
+        from .local import LocalAgent
+        return LocalAgent(settings)
+    if provider == "hybrid":
+        return HybridAgent(settings)
+    return SdkAgent(settings)

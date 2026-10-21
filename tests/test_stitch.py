@@ -37,7 +37,7 @@ def test_whisper_failure_falls_back(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=Boom))
     logged = []
     assert cap.whisper_words(tmp_path / "x.mp4", lambda m, lvl="info": logged.append(m)) is None
-    assert "model download failed" in logged[0]
+    assert any("model download failed" in m for m in logged)
 
 
 def test_estimate_uses_real_clip_lengths():

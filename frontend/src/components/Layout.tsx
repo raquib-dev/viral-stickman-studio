@@ -7,6 +7,7 @@ import { PipelineBar } from "./Pipeline";
 const NAV = [
   ["niche", "Niche", "1"], ["discover", "Discover", "2"], ["patterns", "Patterns", "3"], ["topics", "Topics", "4"],
   ["studio", "Studio", "5-6"], ["render", "Render", "7"], ["package", "Package", "8"], ["learn", "Learn", "9"],
+  ["activity", "Activity", "≡"],
 ] as const;
 
 export function useTheme(): [boolean, () => void] {
@@ -25,10 +26,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [dark, toggle] = useTheme();
   const [projects, setProjects] = useState<{ slug: string; name: string }[]>([]);
   const [dry, setDry] = useState<boolean | null>(null);
+  const [mode, setMode] = useState<{ agent_provider: string; render_backend: string } | null>(null);
   const nav = useNavigate();
   useEffect(() => {
     api.get<{ slug: string; name: string }[]>("/projects").then(setProjects).catch(() => {});
-    api.get<{ dry_run: boolean }>("/health").then((h) => setDry(h.dry_run)).catch(() => {});
+    api.get<{ dry_run: boolean; agent_provider: string; render_backend: string }>("/health")
+      .then((h) => { setDry(h.dry_run); setMode(h); }).catch(() => {});
   }, [slug]);
   return (
     <div className="flex min-h-screen">
@@ -56,9 +59,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
         <div className="mt-auto flex flex-col gap-2 pt-3 text-xs">
           <NavLink to="/settings" className={({ isActive }) => `rounded-lg px-2 py-1.5 text-sm ${isActive ? "bg-surface font-semibold" : "text-ink-2 hover:bg-surface-3"}`} data-testid="nav-settings">⚙ Settings</NavLink>
+          {dry === false && mode && (
+            <span className="text-center text-[11px] text-ink-3" data-testid="mode-detail">
+              writing: {mode.agent_provider === "claude" ? "Claude API" : mode.agent_provider === "local" ? "local LLM" : "hybrid"}<br />
+              video: {mode.render_backend.startsWith("local-") ? `${mode.render_backend} ($0)` : mode.render_backend}
+            </span>
+          )}
           {dry !== null && (
             <span className="chip justify-center" title={dry ? "Dry run: fixture agent + mock render, $0" : "Live: real Claude calls and real renders"}>
-              <span aria-hidden style={{ color: dry ? "var(--good)" : "var(--serious)" }}>{dry ? "●" : "▲"}</span>{dry ? "Dry run ($0)" : "LIVE (costs money)"}
+              <span aria-hidden style={{ color: dry ? "var(--good)" : "var(--serious)" }}>{dry ? "●" : "▲"}</span>{dry ? "Dry run ($0)" : mode?.agent_provider === "local" && mode.render_backend.startsWith("local-") ? "LOCAL ($0)" : "LIVE (costs money)"}
             </span>
           )}
           <button className="btn justify-center" onClick={toggle} data-testid="theme-toggle" aria-label="Toggle dark mode">{dark ? "☀ Light" : "☾ Dark"}</button>

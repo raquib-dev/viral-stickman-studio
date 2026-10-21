@@ -1,6 +1,11 @@
 {
   "_comment": "USD per output second. Sources: docs/research/platform-signals-2026.md. Edit when providers change prices.",
-  "mock": { "360p": 0, "720p": 0, "1080p": 0, "4k": 0 },
+  "mock": {
+    "360p": 0,
+    "720p": 0,
+    "1080p": 0,
+    "4k": 0
+  },
   "omni-gemini": {
     "720p": 0.10136,
     "360p": 0.03379,
@@ -9,8 +14,25 @@
     "_notes": "720p = 5,792 tokens/s x $17.50 per 1M output tokens (Gemini API pricing page). 360p = one third of 720p per the Omni 1.1 launch blog. 1080p/4k upscale rates not verified; set them yourself before enabling."
   },
   "omni-fal": {
-    "360p": 0.03, "720p": 0.10, "1080p": 0.15, "4k": 0.30,
+    "360p": 0.03,
+    "720p": 0.1,
+    "1080p": 0.15,
+    "4k": 0.3,
     "_notes": "fal.ai google/gemini-omni-flash/v1.1 listing, per output second, audio included."
+  },
+  "local-stickman": {
+    "360p": 0,
+    "720p": 0,
+    "1080p": 0,
+    "4k": 0,
+    "_notes": "runs on your machine"
+  },
+  "local-comfyui": {
+    "360p": 0,
+    "720p": 0,
+    "1080p": 0,
+    "4k": 0,
+    "_notes": "runs on your GPU via ComfyUI"
   },
   "retry_allowance": 0.25
 }

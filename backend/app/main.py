@@ -94,7 +94,52 @@ def _snapshot(slug: str) -> dict:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "dry_run": load_settings().get("dry_run", True), "time": time.time()}
+    s = load_settings()
+    return {"ok": True, "dry_run": s.get("dry_run", True), "time": time.time(),
+            "agent_provider": s["agent"]["provider"], "render_backend": s["render"]["backend"]}
+
+
+def _gpu() -> dict:
+    """NVIDIA GPU name and memory via nvidia-smi (no CUDA libraries needed)."""
+    import shutil
+    import subprocess
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return {"ok": False, "error": "nvidia-smi not found (no NVIDIA driver on PATH)"}
+    try:
+        out = subprocess.run([exe, "--query-gpu=name,memory.total,memory.used,driver_version", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=8).stdout.strip().splitlines()
+        name, total, used, driver = [x.strip() for x in out[0].split(",")]
+        return {"ok": True, "name": name, "vram_total_gb": round(int(total) / 1024, 1), "vram_used_gb": round(int(used) / 1024, 1),
+                "driver": driver}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}
+
+
+@app.get("/api/local/status")
+async def local_status() -> dict:
+    """Which local AI pieces are reachable/installed, for Settings → Local services."""
+    from .agent.local import status as llm_status
+    from .render import tts
+    from .render.captions import whisper_device
+    from .render.local import comfy_status
+    s = load_settings()
+    llm, comfy = await asyncio.gather(llm_status(s["agent"]["local"]["base_url"]), comfy_status(s["render"]["comfyui"]["url"]))
+    if llm.get("ok"):
+        llm["model_present"] = any(s["agent"]["local"]["model"] in (m or "") for m in llm.get("models", []))
+    try:
+        import faster_whisper  # noqa: F401
+        whisper = {"installed": True, "device": whisper_device(s["captions"].get("whisper_device", "auto"))[0]}
+    except Exception:
+        whisper = {"installed": False}
+    try:
+        import PIL  # noqa: F401
+        stickman = {"ok": True}
+    except Exception:
+        stickman = {"ok": False, "error": "pip install pillow"}
+    return {"llm": {**llm, "url": s["agent"]["local"]["base_url"], "model": s["agent"]["local"]["model"]},
+            "comfyui": {**comfy, "url": s["render"]["comfyui"]["url"]}, "tts": await asyncio.to_thread(tts.available),
+            "whisper": whisper, "stickman": stickman, "gpu": await asyncio.to_thread(_gpu)}
 
 
 @app.get("/api/settings")
@@ -233,6 +278,21 @@ def job_detail(job_id: int, after: int = 0) -> dict:
     if not j:
         raise HTTPException(404, "unknown job")
     return {**j, "logs": db.job_logs(job_id, after)}
+
+
+@app.post("/api/jobs/{job_id}/retry")
+async def retry_job(job_id: int) -> dict:
+    """Run a finished job's stage again with the same params (e.g. 'clip 6 only')."""
+    j = db.get_job(job_id)
+    if not j:
+        raise HTTPException(404, "unknown job")
+    if pipeline.is_running(j["project"]):
+        raise HTTPException(409, "the pipeline is running; stop it or wait")
+    if j["status"] in ("queued", "running"):
+        raise HTTPException(409, "that job is still running")
+    params = {k: v for k, v in (j["params"] or {}).items() if k != "via"}
+    new_id, _ = manager.submit(j["project"], j["stage"], params)
+    return {"job_id": new_id}
 
 
 @app.post("/api/jobs/{job_id}/cancel")

@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-
 import "./index.css";
 import { Layout } from "./components/Layout";
 import { ProjectProvider } from "./lib/useProject";
+import Activity from "./pages/Activity";
 import Discover from "./pages/Discover";
 import Home from "./pages/Home";
 import Learn from "./pages/Learn";
@@ -17,7 +18,7 @@ import Topics from "./pages/Topics";
 
 const PAGES: Record<string, () => JSX.Element> = {
   niche: Niche, discover: Discover, patterns: Patterns, topics: Topics, studio: Studio, render: Render,
-  package: Package, learn: Learn,
+  package: Package, learn: Learn, activity: Activity,
 };
 
 function ProjectRoute() {

@@ -136,8 +136,13 @@ function LocalServices() {
             {st.gpu?.ok ? `${st.gpu.name} · ${st.gpu.vram_used_gb}/${st.gpu.vram_total_gb} GB used · driver ${st.gpu.driver}` : st.gpu?.error}</Row>
           <Row ok={st.llm?.ok && st.llm?.model_present} name="Local LLM" fix={st.llm?.ok ? <>Model missing: <code>ollama pull {st.llm.model}</code></> : <>Install Ollama, then <code>ollama pull {st.llm?.model}</code> (server at {st.llm?.url}).</>}>
             {st.llm?.ok ? `${st.llm.url} · ${st.llm.models.length} model(s)${st.llm.model_present ? ` · ${st.llm.model} ready` : ""}` : `not reachable at ${st.llm?.url}`}</Row>
-          <Row ok={st.comfyui?.ok} name="ComfyUI" fix="Only needed for the local-comfyui backend. Start ComfyUI (run_nvidia_gpu.bat) with the three Wan 2.1 1.3B files in its models folders: README → ComfyUI on Windows.">
-            {st.comfyui?.ok ? `${st.comfyui.url} · ${st.comfyui.device ?? "device ?"} · ${st.comfyui.vram_free_gb} GB free` : `not reachable at ${st.comfyui?.url}`}</Row>
+          <Row ok={st.comfyui?.ok && !st.comfyui?.missing_models?.length} name="ComfyUI" fix="Only needed for the local-comfyui backend. Start ComfyUI (run_nvidia_gpu.bat) with the three Wan 2.1 1.3B files in its models folders: README → ComfyUI on Windows.">
+            {st.comfyui?.ok ? `${st.comfyui.url} · ${st.comfyui.device ?? "device ?"} · ${st.comfyui.vram_free_gb} GB free` : `not reachable at ${st.comfyui?.url}`}
+            {st.comfyui?.missing_models?.length > 0 && (
+              <ul className="mt-1 grid gap-0.5 text-xs" data-testid="comfy-missing">{st.comfyui.missing_models.map((m: any) => (
+                <li key={m.file}><span style={{ color: "var(--critical)" }}>✕ missing</span> <code>{m.file}</code> for {m.loader}
+                  {m.available.length > 0 && <span className="text-ink-3"> (has: {m.available.join(", ")})</span>}</li>))}</ul>
+            )}</Row>
           <Row ok={st.stickman?.ok} name="Stickman animator" fix={st.stickman?.error}>{st.stickman?.ok ? "ready (Pillow + ffmpeg)" : ""}</Row>
           <Row ok={st.tts?.kokoro || st.tts?.piper} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx</>}>
             {[st.tts?.kokoro && "Kokoro", st.tts?.piper && "Piper"].filter(Boolean).join(", ") || "no engine installed: local clips will be silent"}</Row>

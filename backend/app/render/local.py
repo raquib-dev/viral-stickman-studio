@@ -149,6 +149,10 @@ class ComfyUIBackend:
                     values["IMAGE"] = up.json()["name"]
                 log(f"local-comfyui clip {clip.index + 1}: {'image' if use_i2v else 'text'}-to-video {gw}x{gh}, "
                     f"{frames} frames @ {fps} fps")
+                missing = await missing_models(http, wf)
+                if missing:
+                    raise RenderError("ComfyUI is missing model files: " + missing_message(missing) +
+                                      " (README → ComfyUI on Windows lists the exact files and folders)", retryable=False)
                 r = await http.post("/prompt", json={"prompt": fill(wf, values), "client_id": "vss"})
             except httpx.ConnectError as e:
                 raise RenderError(f"ComfyUI is not running at {url}. Start it, then retry.", retryable=False) from e
@@ -217,16 +221,53 @@ class ComfyUIBackend:
         raise RenderError(f"ComfyUI did not finish in {limit / 60:.0f} min", retryable=False)
 
 
-async def comfy_status(url: str, timeout: float = 4.0) -> dict:
+MODEL_EXT = (".safetensors", ".pth", ".pt", ".ckpt", ".gguf", ".bin", ".sft")
+
+
+def workflow_models(wf: dict) -> list[tuple[str, str, str]]:
+    """(loader class, input name, file name) for every model file a workflow names."""
+    out = []
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        for field, v in (node.get("inputs") or {}).items():
+            if isinstance(v, str) and v.lower().endswith(MODEL_EXT):
+                out.append((node.get("class_type", "?"), field, v))
+    return out
+
+
+async def missing_models(http: httpx.AsyncClient, wf: dict) -> list[dict]:
+    """Model files the workflow needs that this ComfyUI does not have, with what it has instead."""
+    missing, cache = [], {}
+    for cls, field, name in workflow_models(wf):
+        if cls not in cache:
+            r = await http.get(f"/object_info/{cls}")
+            cache[cls] = r.json().get(cls, {}).get("input", {}) if r.status_code == 200 else {}
+        spec = {**cache[cls].get("required", {}), **cache[cls].get("optional", {})}.get(field)
+        have = spec[0] if spec and isinstance(spec[0], list) else None
+        if have is not None and name not in have:
+            missing.append({"loader": cls, "file": name, "available": have[:20]})
+    return missing
+
+
+def missing_message(missing: list[dict]) -> str:
+    return "; ".join(f"{m['loader']} needs {m['file']} (found: {', '.join(m['available']) or 'nothing'})" for m in missing)
+
+
+async def comfy_status(url: str, timeout: float = 4.0, workflow: str = "") -> dict:
     try:
         async with httpx.AsyncClient(base_url=url.rstrip("/"), timeout=timeout) as http:
             r = await http.get("/system_stats")
             r.raise_for_status()
             d = r.json()
             dev = (d.get("devices") or [{}])[0]
-            return {"ok": True, "device": dev.get("name"), "vram_total_gb": round((dev.get("vram_total") or 0) / 2**30, 1),
-                    "vram_free_gb": round((dev.get("vram_free") or 0) / 2**30, 1),
-                    "version": (d.get("system") or {}).get("comfyui_version")}
+            out = {"ok": True, "device": dev.get("name"), "vram_total_gb": round((dev.get("vram_total") or 0) / 2**30, 1),
+                   "vram_free_gb": round((dev.get("vram_free") or 0) / 2**30, 1),
+                   "version": (d.get("system") or {}).get("comfyui_version"), "missing_models": []}
+            f = Path(workflow) if workflow and Path(workflow).is_absolute() else REPO_ROOT / workflow
+            if workflow and f.is_file():
+                out["missing_models"] = await missing_models(http, json.loads(f.read_text(encoding="utf-8")))
+            return out
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
 

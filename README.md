@@ -207,6 +207,9 @@ Then in Settings: turn **Dry run** off, Writing model → **Local LLM only** (or
    | `vae/wan_2.1_vae.safetensors` (≈250 MB) | `C:\ComfyUI\ComfyUI\models\vae\` |
 
    The names must match exactly: the app's workflow `config/comfyui/wan21-t2v-1.3b.json` uses them.
+   Do **not** use `Wan2.1_VAE.pth` or `models_t5_umt5-xxl-enc-bf16.pth` from the `Wan-AI/Wan2.1-T2V-1.3B` repo:
+   those are for Wan's own Python code, not ComfyUI. Settings → Local services lists any file ComfyUI is
+   missing, with what it found instead.
 3. **Start it**: double-click `C:\ComfyUI\run_nvidia_gpu.bat`. Leave the window open; it is ready when it
    prints `To see the GUI go to: http://127.0.0.1:8188`.
 4. **Check from the app**: Settings → Local services → **↻ Check**. The ComfyUI row turns green and shows your

@@ -144,7 +144,7 @@ async def local_status() -> dict:
     from .render.captions import whisper_device
     from .render.local import comfy_status
     s = load_settings()
-    llm, comfy = await asyncio.gather(llm_status(s["agent"]["local"]["base_url"]), comfy_status(s["render"]["comfyui"]["url"]))
+    llm, comfy = await asyncio.gather(llm_status(s["agent"]["local"]["base_url"]), comfy_status(s["render"]["comfyui"]["url"], workflow=s["render"]["comfyui"]["t2v_workflow"]))
     if llm.get("ok"):
         llm["model_present"] = any(s["agent"]["local"]["model"] in (m or "") for m in llm.get("models", []))
     try:

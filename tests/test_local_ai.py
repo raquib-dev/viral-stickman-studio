@@ -281,3 +281,19 @@ async def test_ollama_missing_model_says_how_to_pull():
     s["agent"]["local"] = {**s["agent"]["local"], "model": "qwen3:14b"}
     with pytest.raises(AgentError, match="ollama pull qwen3:14b"):
         await la.LocalAgent(s, transport=httpx.MockTransport(handler)).run(AgentTask("x", "p", SCHEMA), Ctx())
+
+
+async def test_comfyui_reports_missing_model_files():
+    wf = json.loads((paths.REPO_ROOT / "config/comfyui/wan21-t2v-1.3b.json").read_text())
+    have = {"UNETLoader": ("unet_name", ["wan2.1_t2v_1.3B_fp16.safetensors"]),
+            "CLIPLoader": ("clip_name", ["models_t5_umt5-xxl-enc-bf16.pth"]),
+            "VAELoader": ("vae_name", ["Wan2.1_VAE.pth"])}
+
+    def handler(req: httpx.Request):
+        cls = req.url.path.rsplit("/", 1)[-1]
+        field, files = have[cls]
+        return httpx.Response(200, json={cls: {"input": {"required": {field: [files], "type": [["wan"]]}}}})
+    async with httpx.AsyncClient(base_url="http://c", transport=httpx.MockTransport(handler)) as http:
+        missing = await rl.missing_models(http, wf)
+    assert [m["file"] for m in missing] == ["umt5_xxl_fp8_e4m3fn_scaled.safetensors", "wan_2.1_vae.safetensors"]
+    assert "found: Wan2.1_VAE.pth" in rl.missing_message(missing)

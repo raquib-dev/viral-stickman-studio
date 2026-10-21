@@ -202,14 +202,23 @@ NARRATION BY CLIP:
                       "revision_note": revision_note})
 
 
+APP_BLOCKS = """The app inserts the two frozen blocks itself, copied verbatim from the skill's reference files.
+Do NOT write the character anchor or the voice block yourself. In every prompt, put a line containing only
+{{ANCHOR}} where the character anchor belongs (right after the canvas/environment line) and a line containing
+only {{VOICE}} where the voice block belongs (right after the dialogue line). Return character_anchor and
+voice_block as empty strings."""
+
+
 def phase_b(phase_a_md: str, rows: list[dict], ratio: str, duration: int, style: str, theme: str,
-            approval: dict) -> AgentTask:
+            approval: dict, app_inserts_blocks: bool = False) -> AgentTask:
+    blocks = APP_BLOCKS if app_inserts_blocks else """Repeat the frozen character anchor and the complete
+frozen voice block VERBATIM in every prompt; return those two blocks separately as character_anchor and
+voice_block so the app can verify them."""
     prompt = f"""Use the `directing-stickman-videos` skill. The user APPROVED the current Phase A below
 (approval record: {_j(approval)}). Now read references/omni-flash-prompt-contract.md and produce PHASE B:
 the global continuity block, exactly {duration // 10} standalone prompts (one per clip, in order), the
-stitching guide and the voice/music continuity note. Repeat the frozen character anchor and the complete
-frozen voice block VERBATIM in every prompt; return those two blocks separately as character_anchor and
-voice_block so the app can verify them. No hex/RGB/Pantone colours, no visible text in generated clips.
+stitching guide and the voice/music continuity note. {blocks}
+No hex/RGB/Pantone colours, no visible text in generated clips.
 Ratio {ratio}, Style {style}{' ' + theme if style == '1' else ''}.
 
 APPROVED PHASE A:

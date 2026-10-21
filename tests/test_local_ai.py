@@ -218,3 +218,33 @@ def test_ui_build_stale_detects_old_dist(tmp_path, monkeypatch):
     assert main.ui_build_stale() is True
     os.utime(built, (9000, 9000))
     assert main.ui_build_stale() is False
+
+
+def test_phase_b_blocks_inserted_verbatim_for_local_models():
+    from backend.app.agent import tasks
+    from backend.app.agent.skillref import anchor_for, male_voice_block
+    from backend.app.stages.studio import assemble_phase_b, check_phase_b
+    task = tasks.phase_b("md", [], "9:16", 30, "1", "dark", {}, app_inserts_blocks=True)
+    assert "{{ANCHOR}}" in task.prompt and "{{VOICE}}" in task.prompt
+    # what qwen3:8b did: paraphrased both blocks; one clip uses the markers, one skips them
+    res = {"character_anchor": "A white stick man with a round head.", "voice_block": "A calm male narrator.",
+           "prompts": [{"clip": 1, "text": "Create a 10s clip.\nBlack canvas.\n{{ANCHOR}}\nHe walks.\nSays: hi\n{{VOICE}}"},
+                       {"clip": 2, "text": "Create a 10s clip.\nA white stick man with a round head walks. A calm male narrator."},
+                       {"clip": 3, "text": "Create a 10s clip.\nHe smiles."}]}
+    assert len(check_phase_b(dict(res, prompts=[dict(p) for p in res["prompts"]]), 3, "1", "dark")) == 6
+    assemble_phase_b(res, "1", "dark", "male", app_inserts=True)
+    assert check_phase_b(res, 3, "1", "dark") == []
+    anchor, voice = anchor_for("1", "dark"), male_voice_block()
+    assert res["character_anchor"] == anchor and res["voice_block"] == voice
+    assert all(p["text"].count(anchor) == 1 and p["text"].count(voice) == 1 for p in res["prompts"])
+    assert res["prompts"][0]["text"].split("\n")[2] == anchor          # placed where the marker was
+
+
+def test_phase_b_claude_output_left_alone_when_valid():
+    from backend.app.agent import fixtures
+    from backend.app.stages.studio import assemble_phase_b, check_phase_b
+    rows = [{"clip": k, "scene": "s", "motion": "m", "vo": "v"} for k in (1, 2)]
+    res = fixtures.phase_b("md", rows, "9:16", 20, "1", "dark", {})
+    before = [p["text"] for p in res["prompts"]]
+    assert assemble_phase_b(res, "1", "dark", "male", app_inserts=False) == []
+    assert [p["text"] for p in res["prompts"]] == before and check_phase_b(res, 2, "1", "dark") == []

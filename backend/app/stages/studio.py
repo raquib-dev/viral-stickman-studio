@@ -7,7 +7,7 @@ import time
 
 from .. import db
 from ..agent import tasks
-from ..agent.skillref import COLOR_NOTATION, anchor_for
+from ..agent.skillref import COLOR_NOTATION, anchor_for, female_voice_block, male_voice_block
 from ..analysis import blueprint as bp
 from ..analysis.profile import plan_beats
 from ..jobs import StageError, stage
@@ -200,6 +200,44 @@ def phase_a_gate_payload(ctx_or_root, p: dict) -> dict:
             "duration": int(p["duration"]), "style": str(p["style"]), "theme": p.get("theme", "dark")}
 
 
+FIXED_ANCHOR_STYLES = ("1", "4", "5")  # styles with one tested anchor in the skill; 2A/2B/3 are per-story
+
+
+def assemble_phase_b(res: dict, style: str, theme: str, voice_pref: str, app_inserts: bool) -> list[str]:
+    """Put the frozen character anchor and voice block into every prompt verbatim, from the skill's own
+    reference files. Small local models paraphrase long blocks, which breaks the skill's continuity
+    method; the app owns these two blocks, the model writes the scenes. Returns what it changed."""
+    fixes = []
+    anchor = res.get("character_anchor", "").strip()
+    if style in FIXED_ANCHOR_STYLES:
+        canon = anchor_for(style, theme)
+        faceless = canon.replace("occasional simple line expressions, no detailed facial features,", "no face, no eyes, no mouth,")
+        if anchor not in (canon, faceless):
+            if anchor:
+                fixes.append("character anchor replaced with the skill's tested text (the model's version differed)")
+            anchor = canon
+    voice = res.get("voice_block", "").strip()
+    if app_inserts or not voice:
+        skill_voice = female_voice_block() if voice_pref == "female" else male_voice_block()
+        if voice and voice != skill_voice:
+            fixes.append("voice block replaced with the skill's tested text")
+        voice = skill_voice
+    res["character_anchor"], res["voice_block"] = anchor, voice
+    for pr in res.get("prompts", []):
+        text = pr["text"].replace("{{ANCHOR}}", anchor).replace("{{VOICE}}", voice)
+        if anchor and style not in ("2A", "2B", "3") and anchor not in text:
+            lines = text.split("\n")
+            text = "\n".join([*lines[:1], anchor, *lines[1:]])  # after the opening format line
+            if not app_inserts:
+                fixes.append(f"clip {pr['clip']}: inserted the character anchor verbatim")
+        if voice not in text:
+            text = text.rstrip() + "\n" + voice
+            if not app_inserts:
+                fixes.append(f"clip {pr['clip']}: inserted the voice block verbatim")
+        pr["text"] = text
+    return fixes
+
+
 def check_phase_b(res: dict, n: int, style: str, theme: str) -> list[str]:
     errs = []
     prompts = res["prompts"]
@@ -232,8 +270,14 @@ async def direction_b(ctx) -> dict:
     md = ctx.read_text("direction/phase-a.md")
     approval = {"approved_by": g["decided_by"], "at": time.strftime("%Y-%m-%d %H:%M", time.localtime(g["decided_at"] or time.time())),
                 "note": g.get("note") or "", "phase_a_sha": payload["phase_a_sha"]}
+    # a local model writes direction only in "local" mode (hybrid sends direction to Claude)
+    app_inserts = not ctx.dry_run and ctx.settings.get("agent", {}).get("provider") == "local"
     res = await ctx.agent.run(tasks.phase_b(md, a["rows"], p["ratio"], int(p["duration"]), str(p["style"]),
-                                            p.get("theme", "dark"), approval), ctx)
+                                            p.get("theme", "dark"), approval, app_inserts), ctx)
+    if app_inserts:
+        ctx.log("local model: the app inserts the frozen anchor and voice block verbatim from the skill files")
+    for fix in assemble_phase_b(res, str(p["style"]), p.get("theme", "dark"), p.get("voice_pref", "male"), app_inserts):
+        ctx.log("repaired: " + fix, "warn")
     errs = check_phase_b(res, int(p["duration"]) // 10, str(p["style"]), p.get("theme", "dark"))
     ctx.write_json("direction/phase-b.json", {**res, "checks": errs, "approval": approval})
     out = [f"# Phase B - Omni Flash production package", "", "## Global continuity block", res["global_block"], "",

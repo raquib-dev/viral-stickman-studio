@@ -277,7 +277,8 @@ def phase_a(title: str, clips: list, ratio: str, duration: int, style: str, them
             "hook_card": hook_card}
 
 
-def phase_b(phase_a_md: str, rows: list, ratio: str, duration: int, style: str, theme: str, approval: dict) -> dict:
+def phase_b(phase_a_md: str, rows: list, ratio: str, duration: int, style: str, theme: str, approval: dict,
+            app_inserts_blocks: bool = False) -> dict:
     anchor = anchor_for(style if style != "3" else "1", theme)
     voice = male_voice_block()
     env = ("Flat, uniform, pitch-black canvas with pure white line art." if theme == "dark"

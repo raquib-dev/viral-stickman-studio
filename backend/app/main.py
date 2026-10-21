@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -370,13 +370,17 @@ def swipe(slug: str) -> list[dict]:
 
 
 @app.get("/api/projects/{slug}/files/{rel:path}")
-def project_file(slug: str, rel: str):
+def project_file(slug: str, rel: str, optional: bool = False):
+    """Serve a project output. optional=1 answers 204 for "not produced yet" instead of 404, so the UI
+    can poll for files that appear as stages finish without logging errors."""
     _project_or_404(slug)
     try:
         f = paths.safe_project_path(slug, rel)
     except ValueError as e:
         raise HTTPException(400, str(e))
     if not f.exists() or not f.is_file():
+        if optional:
+            return Response(status_code=204)
         raise HTTPException(404, f"{rel} does not exist yet")
     if f.suffix == ".json":
         return JSONResponse(json.loads(f.read_text(encoding="utf-8")))

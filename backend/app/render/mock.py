@@ -21,16 +21,17 @@ class MockBackend:
         out = clip.out_path
         assert out is not None
         out.parent.mkdir(parents=True, exist_ok=True)
-        lines = [f"DRY RUN - clip {clip.index + 1}", clip.label[:40], ""] + textwrap.wrap(clip.vo, 26)[:6]
+        # kept short and above the caption band so dry-run captions stay readable (real Omni clips carry no text)
+        lines = [f"DRY RUN - clip {clip.index + 1}", clip.label[:40]] + textwrap.wrap(clip.vo, 30)[:3]
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as fh:
             fh.write("\n".join(lines))
             txt = Path(fh.name)
         font = fontfile_arg()
-        size = max(18, w // 24)
+        size = max(16, w // 30)
         bg = PALETTE[clip.index % len(PALETTE)]
         tf = str(txt).replace("\\", "/").replace(":", "\\:")
         vf = (f"drawtext={font}textfile='{tf}':fontcolor=white:fontsize={size}:line_spacing={size // 3}:"
-              f"x=(w-tw)/2:y=h*0.36,"
+              f"x=(w-tw)/2:y=h*0.30,"
               # a moving dot stands in for motion so scene-change and frame checks have something to see
               f"drawbox=x='mod(t*{w // 4}\\,{w})':y={int(h * 0.75)}:w={size}:h={size}:color=white@0.9:t=fill")
         freq = 196 + 24 * (clip.index % 8)

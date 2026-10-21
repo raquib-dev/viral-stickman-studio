@@ -323,8 +323,8 @@ def package(title: str, narration: str, topic: dict, hook: dict, duration: int, 
                            "Sources to check before publishing are listed in the project notes.",
             "tags": ["present bias", "behavioral finance", "saving money", "money psychology", "Save More Tomorrow"],
             "queries": ["why can't I save money", "present bias explained", "how to save money automatically"],
-            "chapter_titles": [], "ig_caption": "Would you automate it, or trust yourself? Comment AUTO and tell me which.\n\n"
-                                               "Present bias makes tonight louder than future-you. The fix isn't willpower, it's removing the choice on payday.\n\n"
+            "chapter_titles": [], "ig_caption": "Would you automate it, or trust yourself? Comment AUTO.\n\n"
+                                               "Present bias makes tonight louder than future-you. Saving money gets easier when you remove the choice on payday.\n\n"
                                                "#moneypsychology #behavioralfinance #savingmoney",
             "ig_keywords": ["present bias", "saving money"], "cutdowns": []}
 

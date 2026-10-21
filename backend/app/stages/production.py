@@ -163,7 +163,8 @@ async def stitch_stage(ctx) -> dict:
         words = cap.estimate_words([c["vo"] for c in s["clips"]])
     ctx.write_json("final/words.json", {"method": method, "words": words_json(words)})
     ctx.write_text("final/final.srt", to_srt(words))
-    hook_card = a.get("hook_card") or s["hook"].get("write")
+    # the on-screen card you approved at the hook gate wins over the director's suggestion
+    hook_card = s["hook"].get("write") or a.get("hook_card")
     callouts = [{"t": (o["clip"] - 1) * 10 + 3.0, "text": o["text"], "hold": 2.2} for o in a.get("overlays", [])
                 if o.get("clip", 1) != 1 and o.get("text")]
     ass, violations = cap.build_ass(words, p["ratio"], w, h, hook_card=hook_card, callouts=callouts,
@@ -178,10 +179,12 @@ async def stitch_stage(ctx) -> dict:
     loud = ctx.settings["loudness"]
     report = await th(st.loudnorm, captioned, ctx.path("final/final.mp4"), loud["integrated_lufs"], loud["true_peak_db"])
     info = probe(ctx.path("final/final.mp4"))
+    from ..render.media import run_ffmpeg
+    await th(run_ffmpeg, ["-ss", "1.2", "-i", str(ctx.path("final/final.mp4")), "-frames:v", "1", str(ctx.path("final/poster.png"))])
     ctx.write_json("final/loudness.json", {**report, **info, "caption_timing": method, "safe_zone_violations": violations})
     ctx.log(f"final.mp4: {info['duration']:.1f}s {info['width']}x{info['height']}, {report['after_i']:.1f} LUFS "
             f"(target {report['target_i']}), captions timed by {method}")
-    return {"outputs": ["final/final.mp4", "final/final.srt", "final/captions.ass", "final/words.json", "final/loudness.json"]}
+    return {"outputs": ["final/final.mp4", "final/poster.png", "final/final.srt", "final/captions.ass", "final/words.json", "final/loudness.json"]}
 
 
 POLICY_NOTES = [

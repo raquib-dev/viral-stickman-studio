@@ -1,0 +1,18 @@
+{
+  "dry_run": true,
+  "models": { "direction": "claude-opus-5-5", "research": "claude-opus-5-5", "labeling": "claude-sonnet-5-5" },
+  "agent_budget_per_stage_usd": 2.0,
+  "render": {
+    "backend": "mock",
+    "resolution": "720p",
+    "continuity": "first_frame",
+    "max_retries": 2,
+    "budget_cap_usd": 10.0
+  },
+  "gates": { "topic": "pause", "hook": "pause", "phase_a": "pause", "render_cost": "pause" },
+  "topic_weights": { "outlier_evidence": 0.35, "gap": 0.25, "stickman_fit": 0.20, "niche_fit": 0.20 },
+  "speaking_wpm": 150,
+  "discovery": { "videos_per_channel": 30, "max_channels": 12, "yt_min_multiple": 2.0, "ig_signal_multiple": 3.0 },
+  "captions": { "enabled": true, "words_per_page": 3 },
+  "loudness": { "integrated_lufs": -16.0, "true_peak_db": -1.0 }
+}

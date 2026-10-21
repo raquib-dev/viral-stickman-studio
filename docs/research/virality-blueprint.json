@@ -1,0 +1,330 @@
+{
+  "version": "1.0.0",
+  "updated": "2026-10-21",
+  "disclaimer": "Rules are evidence-weighted defaults, not laws. Labels produced from them are judgements about a transcript's words, not proof that a technique caused a video's performance. Timings marked profile_overridable are replaced by the niche pattern profile once the user's own outlier evidence exists. Sources: docs/research/*.md.",
+  "evidence_scale": {
+    "official": "Platform or API provider documentation.",
+    "strong": "Peer-reviewed and replicated, or a large field dataset.",
+    "moderate": "One solid peer-reviewed study, or strong research from outside short video.",
+    "weak": "Real research, but applying it to short video is our inference.",
+    "pack": "Guidance from the vendored skill packs (author practice; sometimes measured, mostly not).",
+    "lore": "Creator claims with no controlled evidence."
+  },
+  "rules": [
+    {
+      "id": "hook-first-line-3s",
+      "type": "hook-placement",
+      "rule": "The opening spoken line opens a specific gap or names a stake and finishes inside the first 3 seconds. No greeting, intro or 'in this video'.",
+      "timing": { "mode": "seconds", "from": 0, "to": 3, "formats": ["shorts", "reels", "long"], "min_count": 1, "max_count": 1, "note": "beats.py HOOK_WINDOW = 3.0 s." },
+      "mechanism": "Information-gap curiosity (Loewenstein) and the swipe decision; Meta models the probability of a < 3 s watch.",
+      "evidence": [
+        { "url": "https://transparency.meta.com/features/explaining-ranking/ig-reels-chaining/", "strength": "official", "note": "Reels ranking predicts likelihood of watching less than three seconds." },
+        { "url": "https://pubmed.ncbi.nlm.nih.gov/19619181/", "strength": "strong", "note": "Kang et al. 2009: curiosity engages reward circuitry and increases effort to get answers." },
+        { "url": "repo:.claude/skills/ig-reel/beats.py", "strength": "pack", "note": "Flags a hook beat running past 3 s." }
+      ],
+      "how_to_detect": {
+        "method": "regex+llm",
+        "description": "Take transcript words with start < 3.0 s. Fail on greeting/preamble patterns; ask the LLM whether those words open a specific, unanswered gap or stake.",
+        "patterns": ["(?i)^\\s*(hey|hi|hello|what'?s up|welcome)\\b", "(?i)\\bin (this|today'?s) (video|reel)\\b", "(?i)\\bbefore we (get started|begin)\\b"],
+        "llm_question": "Do the words spoken before 3.0 s open a specific question or stake that the viewer cannot close without watching on? Answer yes/no and quote the gap."
+      },
+      "how_to_stage_in_stickman": "Clip 1 [0-3s] starts mid-action: the figure is already lunging for, catching or recoiling from an oversized prop. A 2-5 word hook card (post-production) sits in the safe zone and does not repeat the spoken words.",
+      "misuse": "A gap the video never closes (clickbait).",
+      "arc_stage": "golden-hook",
+      "severity": "must"
+    },
+    {
+      "id": "hook-jobs-by-15s-long",
+      "type": "hook-placement",
+      "rule": "In long-form, the hook's three jobs are done by 15 s: confirm the title's promise, open the question, and prove the payoff exists. Protect the 30 s Intro metric.",
+      "timing": { "mode": "seconds", "from": 0, "to": 15, "formats": ["long"], "min_count": 1, "max_count": 1 },
+      "mechanism": "Title/thumbnail promise confirmation reduces early abandonment; YouTube reports the share still watching after 30 s.",
+      "evidence": [
+        { "url": "https://support.google.com/youtube/answer/9314415?hl=en", "strength": "official", "note": "Intro key moment = audience still watching after 30 s; align thumbnail and title with the opening." },
+        { "url": "repo:.claude/skills/yt-script/SKILL.md", "strength": "pack", "note": "The first 15 seconds is the whole job." }
+      ],
+      "how_to_detect": {
+        "method": "llm",
+        "description": "Compare the title with transcript text before 15 s.",
+        "llm_question": "Before 15 s, does the narration (a) restate the title's promise, (b) open a question, and (c) show or promise concrete proof of the payoff? Answer each yes/no with a quote."
+      },
+      "how_to_stage_in_stickman": "Clips 1-2 show the promised artifact briefly (the finished 'machine', the full chart) before the explanation begins, then hide it again.",
+      "arc_stage": "golden-hook",
+      "severity": "must"
+    },
+    {
+      "id": "stakes-line-early",
+      "type": "stakes-line",
+      "rule": "One line names what it costs the viewer to keep doing the current thing, with a concrete, sourced number when one exists. Short-form places it by 0:04-0:07, long-form by 0:20.",
+      "timing": { "mode": "seconds", "from": 2, "to": 7, "formats": ["shorts", "reels"], "min_count": 1, "max_count": 2, "profile_overridable": true, "note": "Long-form: by 20 s (see stakes-line-long)." },
+      "mechanism": "Self-relevance and possible loss make the message matter. Loss aversion is contested (Gal & Rucker 2018); naming a concrete cost is the safe version of the claim.",
+      "evidence": [
+        { "url": "https://papers.ssrn.com/abstract=3049660", "strength": "moderate", "note": "Gal & Rucker 2018 challenge the general loss-aversion claim; use concrete stakes rather than fear." },
+        { "url": "repo:.claude/skills/ig-reel/SKILL.md", "strength": "pack", "note": "0:02-0:07 THE STAKE: why this matters to the person watching." }
+      ],
+      "how_to_detect": {
+        "method": "regex+llm",
+        "description": "Cost/loss vocabulary or a money/time figure aimed at 'you', confirmed by the LLM as a stake for the viewer.",
+        "patterns": ["(?i)\\b(cost|costs|costing|lose|losing|lost|waste|wasting|paying|broke|miss out)\\b", "\\$\\s?\\d", "(?i)\\b\\d+\\s?(hours?|days?|years?|percent|%)\\b"],
+        "llm_question": "Which sentence states what the viewer personally loses or pays by not acting? Give its start time, or 'none'."
+      },
+      "how_to_stage_in_stickman": "A concrete loss in motion: coins drain from the figure's pocket, an hourglass empties onto a pile, or a trapdoor opens under the next step. One danger accent colour, used only here and at the catch.",
+      "misuse": "Invented or inflated numbers; fear-mongering in finance or health.",
+      "arc_stage": "golden-hook",
+      "severity": "must"
+    },
+    {
+      "id": "stakes-line-long",
+      "type": "stakes-line",
+      "rule": "Long-form: the stakes line lands within the first 20 s.",
+      "timing": { "mode": "seconds", "from": 0, "to": 20, "formats": ["long"], "min_count": 1, "max_count": 2, "profile_overridable": true },
+      "mechanism": "Same as stakes-line-early, scaled to a longer opening.",
+      "evidence": [ { "url": "repo:.claude/skills/yt-script/SKILL.md", "strength": "pack", "note": "Hook = confirm, open a question, prove the payoff; the stake is part of why the question matters." } ],
+      "how_to_detect": {
+        "method": "llm",
+        "description": "Same as stakes-line-early, over the first 20 s.",
+        "llm_question": "Which sentence before 20 s states what the viewer personally loses or pays by not acting? Give its start time, or 'none'."
+      },
+      "how_to_stage_in_stickman": "Same visual vocabulary as stakes-line-early, held a beat longer with a slow camera push.",
+      "arc_stage": "golden-hook",
+      "severity": "should"
+    },
+    {
+      "id": "rehook-stage-boundaries",
+      "type": "rehook-cadence",
+      "rule": "Re-open the loop at stage boundaries with a 'but here's the catch' line that raises a new, specific question before the old one is fully closed. Defaults are about 35% and 70% of runtime, replaced by the niche profile once evidence exists.",
+      "timing": { "mode": "percent", "from": 30, "to": 75, "formats": ["shorts", "reels", "long"], "min_count": 1, "max_count": 3, "profile_overridable": true, "note": "Default anchors 35% and 70%: end of Disrupting Assumptions and end of Ultimate Truth." },
+      "mechanism": "Curiosity gaps plus the resumption pull for unfinished sequences (Ovsiankina). The memory-advantage version of the Zeigarnik effect does not replicate.",
+      "evidence": [
+        { "url": "https://ideas.repec.org/a/pal/palcom/v12y2025i1d10.1057_s41599-025-05000-w.html", "strength": "strong", "note": "Ghibellini & Meier 2025 meta-analysis: no memory advantage for unfinished tasks, but a general tendency to resume them." },
+        { "url": "https://passionfru.it/mrbeast-leaked-document-81151/", "strength": "lore", "note": "Leaked (unconfirmed) MrBeast production guide on re-engagement." },
+        { "url": "repo:vendor/papercut-explainer/skills/papercut-script/SKILL.md", "strength": "pack", "note": "Spine beats 'And get this' (peak) and 'Catch' (honest counterpoint)." }
+      ],
+      "how_to_detect": {
+        "method": "regex+llm",
+        "description": "Pivot phrases, confirmed by the LLM as opening a new question rather than summarising.",
+        "patterns": ["(?i)\\bbut here'?s (the|where|what)\\b", "(?i)\\b(and get this|here'?s the (catch|twist|thing))\\b", "(?i)\\bbut (that'?s not|it gets)\\b", "(?i)\\b(wait|except)\\b", "(?i)\\bthe (real|actual) (reason|problem)\\b"],
+        "llm_question": "List every line that raises a new unanswered question mid-video (a re-hook). Give start times. Exclude summaries."
+      },
+      "how_to_stage_in_stickman": "The figure reaches the 'answer' door, opens it and finds a second, stranger door behind it. Or a camera whip to a new scene with one new oversized prop. The cut carries motion (push in, impact out).",
+      "misuse": "Stacking loops that are never closed; fake twists.",
+      "arc_stage": "any",
+      "severity": "should"
+    },
+    {
+      "id": "rehook-long-every-3min",
+      "type": "rehook-cadence",
+      "rule": "Long-form: a re-engagement beat (new escalation, twist or reveal) roughly every 3 minutes.",
+      "timing": { "mode": "seconds", "from": 150, "every": 180, "formats": ["long"], "min_count": 0, "profile_overridable": true, "note": "Lore default. Replace with niche-profile cadence." },
+      "mechanism": "Counteracts the steady slide in the middle of long videos.",
+      "evidence": [
+        { "url": "https://gigazine.net/gsc_news/en/20240917-mrbeast-youtube-production", "strength": "lore", "note": "Reported re-engagement at about 3 and 6 minutes in the leaked guide." },
+        { "url": "https://support.google.com/youtube/answer/9314415?hl=en", "strength": "official", "note": "Gradual declines mean viewers are losing interest over time." }
+      ],
+      "how_to_detect": {
+        "method": "llm",
+        "description": "Find escalations and reveals and measure the gaps between them.",
+        "llm_question": "List the timestamps where the video escalates, reveals or twists. What is the longest gap between two of them?"
+      },
+      "how_to_stage_in_stickman": "A scene change to a new location (Style 4) or a scale jump: the figure shrinks while the problem grows, and the camera pulls back to reveal it.",
+      "arc_stage": "any",
+      "severity": "may"
+    },
+    {
+      "id": "pattern-interrupt-cadence",
+      "type": "pattern-interrupt-cadence",
+      "rule": "A perceptible visual change every 2-3 s inside each clip, plus at least one stage-level interrupt (palette flip, freeze, scale jump, hard cut to close-up) per 10-15 s.",
+      "timing": { "mode": "seconds", "from": 0, "every": 3, "formats": ["shorts", "reels", "long"], "profile_overridable": true, "note": "Stage-level interrupts every 10-15 s default." },
+      "mechanism": "Orienting response to structural features (cuts, onsets) draws processing resources, up to cognitive overload (LC4MP).",
+      "evidence": [
+        { "url": "https://www.scinapse.io/papers/2163176562", "strength": "moderate", "note": "Lang 2000, Limited Capacity Model of Mediated Message Processing." },
+        { "url": "https://journals.sagepub.com/doi/10.1177/0956797610361679", "strength": "moderate", "note": "Cutting et al. 2010: shot structure and attention in film." },
+        { "url": "repo:.claude/skills/directing-stickman-videos/SKILL.md", "strength": "pack", "note": "Visual change every two to three seconds; three timed beats per clip." }
+      ],
+      "how_to_detect": {
+        "method": "tool",
+        "description": "Transcript-only proxy: beats.py flags any spoken beat over 4 s. With video, ffmpeg scene-change detection counts cuts per 10 s window.",
+        "tool": "ig-reel/beats.py --json; ffmpeg select='gt(scene,0.3)'"
+      },
+      "how_to_stage_in_stickman": "Use the director skill's three beats per clip. Stage-level interrupts: the figure freezes mid-run and the accent colour floods the frame, or a hard cut from a wide shot to an extreme close-up of the hero prop.",
+      "misuse": "Spectacle unrelated to the spoken idea; overload.",
+      "arc_stage": "any",
+      "severity": "must"
+    },
+    {
+      "id": "callout-on-stressed-word",
+      "type": "callout-placement",
+      "rule": "A 2-5 word callout (arrow + label) appears on the stressed word of a key claim or number, stays one beat (about 1.5-3 s), and never repeats the spoken words verbatim. At most one on screen at a time.",
+      "timing": { "mode": "percent", "from": 5, "to": 90, "formats": ["shorts", "reels", "long"], "max_count": 8, "note": "Short-form: about one per 10 s clip at most." },
+      "mechanism": "Dual coding of the key fact for muted viewers; most mobile video is watched with the sound off in public.",
+      "evidence": [
+        { "url": "https://www.streamingmedia.com/Articles/News/Online-Video-News/80-of-Video-Caption-Users-Arent-Hearing-Impaired-Finds-Verizon-131860.aspx", "strength": "moderate", "note": "Verizon Media/Publicis survey: 69% watch with sound off in public; 80% of caption users not hearing-impaired." },
+        { "url": "repo:vendor/papercut-explainer/skills/papercut-script/SKILL.md", "strength": "pack", "note": "Banners 3-7 words, one fact each, never repeat the VO." }
+      ],
+      "how_to_detect": {
+        "method": "regex+llm",
+        "description": "Candidate callout points are numbers, named entities and contrast words in the transcript; the LLM picks the stressed word.",
+        "patterns": ["\\b\\d[\\d,.]*\\s?(%|percent|x|times)?\\b", "(?i)\\b(never|always|only|actually|instead)\\b"],
+        "llm_question": "For each sentence carrying a key fact or number, which single word is stressed? Return word and start time."
+      },
+      "how_to_stage_in_stickman": "The figure points at the prop on the stressed word (Omni beat). The text label is added in post inside the safe zone, never over the figure's head or the caption band.",
+      "arc_stage": "any",
+      "severity": "should"
+    },
+    {
+      "id": "deliberate-mistake-one",
+      "type": "deliberate-mistake-placement",
+      "rule": "At most one deliberate, harmless slip per video, placed in the Insider Secrets stage (about 30-60% of runtime). It must be visual or trivial, never in a fact, number or piece of advice, and it is recorded in the project notes as intentional.",
+      "timing": { "mode": "percent", "from": 30, "to": 60, "formats": ["shorts", "reels", "long"], "min_count": 0, "max_count": 1, "profile_overridable": true },
+      "mechanism": "Corrections invite comments (creator lore, 'Cunningham's Law'). The pratfall effect suggests a small blunder makes a competent source more likeable (lab evidence).",
+      "evidence": [
+        { "url": "https://paperity.org/p/59814503/the-effect-of-a-pratfall-on-increasing-interpersonal-attractiveness", "strength": "weak", "note": "Aronson, Willerman & Floyd 1966 pratfall effect; lab study, not video." },
+        { "url": "repo:docs/research/video-psychology.md", "strength": "lore", "note": "Section 8: the comment-bait deliberate-mistake tactic (Cunningham's Law) has no controlled study I could find." }
+      ],
+      "how_to_detect": {
+        "method": "llm",
+        "description": "In competitors' transcripts the LLM flags self-evident slips such as miscounts, wrong labels or obviously wrong trivia, and checks the comment-section context if the user pasted comments.",
+        "llm_question": "Is there a small, self-evident error a viewer would want to correct (a miscount, wrong name, mislabel) that does not change the video's main claim? Quote it with its time, or 'none'."
+      },
+      "how_to_stage_in_stickman": "Visual only: the figure confidently counts three coins while four are visible, or stacks one icon block upside down. Never in the narration's facts or numbers.",
+      "misuse": "Any error in the teaching content: in finance or health that is misinformation, not bait.",
+      "arc_stage": "insider-secrets",
+      "severity": "may"
+    },
+    {
+      "id": "payoff-before-final-quarter",
+      "type": "payoff-timing",
+      "rule": "Deliver the thing the hook promised, explicitly, by about 75-85% of runtime. Short-form gives the core 'aha' by 60-80%, then elevation. Say that you are delivering it.",
+      "timing": { "mode": "percent", "from": 55, "to": 85, "formats": ["shorts", "reels", "long"], "min_count": 1, "max_count": 1, "profile_overridable": true },
+      "mechanism": "Closing the opened gap rewards curiosity; ending on a high shapes recall (peak-end).",
+      "evidence": [
+        { "url": "https://www.psychologicalscience.org/journals/psychological-science/j.1467-9280.1993.tb00589.x/", "strength": "strong", "note": "Kahneman et al. 1993 peak-end: retrospective judgement dominated by peak and end." },
+        { "url": "https://support.google.com/youtube/answer/9314415?hl=en", "strength": "official", "note": "Top moments appearing late suggest moving compelling content earlier." },
+        { "url": "repo:.claude/skills/yt-script/SKILL.md", "strength": "pack", "note": "Deliver the thing the hook promised, explicitly, and say that you are delivering it." }
+      ],
+      "how_to_detect": {
+        "method": "regex+llm",
+        "description": "Payoff markers plus the LLM matching the hook's question to the sentence that answers it.",
+        "patterns": ["(?i)\\b(here'?s (the|how|why)|the answer is|that'?s why|which means|so the (real )?(fix|answer|reason))\\b"],
+        "llm_question": "Which sentence answers the question the hook opened? Give its start time, or 'never answered'."
+      },
+      "how_to_stage_in_stickman": "The single exaggerated beat: snap zoom on the payoff object, the reward accent colour appears for the first time, and the figure completes the machine it has been assembling (IKEA effect).",
+      "arc_stage": "ultimate-truth",
+      "severity": "must"
+    },
+    {
+      "id": "cta-one-at-payoff",
+      "type": "cta-placement",
+      "rule": "Exactly one ask (comment question, keyword, save or follow), placed after the payoff in the final 10-15% of runtime. Never a subscribe/follow pitch in the opening.",
+      "timing": { "mode": "percent", "from": 85, "to": 100, "formats": ["shorts", "reels", "long"], "min_count": 1, "max_count": 1, "note": "Long-form: before the end-screen window (final 5-20 s)." },
+      "mechanism": "Two asks split intent; an early pitch costs attention before value has been delivered.",
+      "evidence": [
+        { "url": "repo:.claude/skills/ig-caption/caption.py", "strength": "pack", "note": "Counts asks; two asks is the same as none." },
+        { "url": "repo:.claude/skills/yt-script/SKILL.md", "strength": "pack", "note": "Subscribe pitch early is the most common cause of the 0:30 cliff; one ask, not three." }
+      ],
+      "how_to_detect": {
+        "method": "regex",
+        "description": "Count ask patterns and their positions. Fail if more than one, or if any ask falls before 15% of runtime.",
+        "patterns": ["(?i)\\bcomment\\b", "(?i)\\b(subscribe|follow (me|for))\\b", "(?i)\\b(save|share|send) (this|it)\\b", "(?i)\\blink in (my )?bio\\b", "(?i)\\b(tell me|let me know|which (one|would you))\\b"]
+      },
+      "how_to_stage_in_stickman": "Director Stage 5: the figure stands between two paths (a real split) and looks back at camera for one beat. The keyword or question appears in post as a single card.",
+      "arc_stage": "elevation-discussion",
+      "severity": "must"
+    },
+    {
+      "id": "loop-ending-echo",
+      "type": "loop-ending",
+      "rule": "The last line repeats a key word or number from the hook, and the final frame visually matches frame 0, so a replay feels continuous.",
+      "timing": { "mode": "seconds", "from": 0, "to": 3, "from_end": true, "formats": ["shorts", "reels"], "min_count": 1, "max_count": 1 },
+      "mechanism": "YouTube counts Shorts replays as views; Meta predicts watching more than 95% of same-length viewers. A seamless loop raises watch time relative to length (inference).",
+      "evidence": [
+        { "url": "https://support.google.com/youtube/answer/10059070?hl=en", "strength": "official", "note": "Shorts views count starts and replays (since 31 Mar 2025)." },
+        { "url": "https://transparency.meta.com/features/explaining-ranking/ig-reels-chaining/", "strength": "official", "note": "Prediction: watch more than 95% of users who watched reels of the same length." },
+        { "url": "repo:.claude/skills/ig-reel/beats.py", "strength": "pack", "note": "Loop check: last beat shares a word with the hook." }
+      ],
+      "how_to_detect": {
+        "method": "tool",
+        "description": "beats.py loop note (shared non-stopword between first and last beat).",
+        "tool": "ig-reel/beats.py --json"
+      },
+      "how_to_stage_in_stickman": "The final clip's [7-10s] beat returns the figure and hero prop to the clip-1 first-frame layout, mid-motion, so the cut back to frame 0 reads as continuous.",
+      "arc_stage": "elevation-discussion",
+      "severity": "should"
+    },
+    {
+      "id": "frame-zero-motion",
+      "type": "frame-zero-motion",
+      "rule": "Frame 0 is already mid-action with a readable focal object; no fade-in, no establishing shot, no static figure.",
+      "timing": { "mode": "seconds", "from": 0, "to": 1, "formats": ["shorts", "reels", "long"], "min_count": 1, "max_count": 1 },
+      "mechanism": "Orienting response to motion onset; the swipe decision is made in the first seconds.",
+      "evidence": [
+        { "url": "repo:vendor/papercut-explainer/skills/papercut-hook/SKILL.md", "strength": "pack", "note": "SHOW: the most striking moment, already mid-action. No establishing shot, no fade-in." },
+        { "url": "https://transparency.meta.com/features/explaining-ranking/ig-reels-chaining/", "strength": "official", "note": "Under-3-second watch prediction." }
+      ],
+      "how_to_detect": {
+        "method": "tool",
+        "description": "With video: frame-difference energy between frames 0 and 12. Transcript only: not detectable (marked unknown).",
+        "tool": "ffmpeg tblend/scene score on the first 0.5 s"
+      },
+      "how_to_stage_in_stickman": "Clip 1 prompt first-frame state: 'the figure is already mid-leap toward the falling coin'. Never 'the figure stands'.",
+      "arc_stage": "golden-hook",
+      "severity": "must"
+    },
+    {
+      "id": "text-safe-zone-9x16",
+      "type": "text-safe-zone",
+      "rule": "All post-production text and callouts in 9:16 stay inside: top 14%, bottom 35%, left 6%, right 21% margins. Six words or fewer per card.",
+      "timing": { "mode": "percent", "from": 0, "to": 100, "formats": ["shorts", "reels"] },
+      "mechanism": "Platform UI (caption, action rail, profile row) covers the margins.",
+      "evidence": [
+        { "url": "https://www.facebook.com/business/ads-guide/update/image/instagram-reels", "strength": "official", "note": "Keep ~14% top, 35% bottom, 6% sides free of key creative (ads)." },
+        { "url": "repo:.claude/skills/ig-reel/SKILL.md", "strength": "pack", "note": "Nothing above y=230 or below y=1440 on 1080x1920; keep right 230 px clear." }
+      ],
+      "how_to_detect": {
+        "method": "tool",
+        "description": "Overlay layout validator in the stitch stage checks every text box against the margins.",
+        "tool": "backend/render/overlays.py safe_zone_check"
+      },
+      "how_to_stage_in_stickman": "Omni prompts reserve clean negative space in the middle band for overlays (director skill: interface-safe overlay space in 9:16).",
+      "arc_stage": "any",
+      "severity": "must"
+    },
+    {
+      "id": "end-screen-hold-long",
+      "type": "end-screen-hold",
+      "rule": "Long-form reserves the final 5-20 s for a calm visual hold under end-screen elements, after the CTA and payoff.",
+      "timing": { "mode": "seconds", "from": 0, "to": 20, "from_end": true, "formats": ["long"], "max_count": 1 },
+      "mechanism": "End-screen elements cover the frame; drop-off during the end is normal.",
+      "evidence": [
+        { "url": "https://support.google.com/youtube/answer/6388789?hl=en", "strength": "official", "note": "End screens in the final 5-20 s; video must be at least 25 s." }
+      ],
+      "how_to_detect": {
+        "method": "regex",
+        "description": "Flag substantive narration words in the last 5 s of long-form.",
+        "patterns": ["(?i)\\b(because|which means|the answer)\\b"]
+      },
+      "how_to_stage_in_stickman": "The last clip ends with the figure walking toward the horizon on the left third; the right two thirds stay clean for end-screen tiles.",
+      "arc_stage": "elevation-discussion",
+      "severity": "should"
+    },
+    {
+      "id": "no-intro-sequence",
+      "type": "no-intro",
+      "rule": "No title sequence, logo sting, countdown or channel intro before the hook.",
+      "timing": { "mode": "seconds", "from": 0, "to": 5, "formats": ["shorts", "reels", "long"], "max_count": 0 },
+      "mechanism": "Every second before the gap opens is a second to swipe away.",
+      "evidence": [
+        { "url": "repo:.claude/skills/ig-reel/SKILL.md", "strength": "pack", "note": "Cut the intro. No greeting, no name, no logo sting." },
+        { "url": "repo:.claude/skills/yt-script/SKILL.md", "strength": "pack", "note": "No channel intro, no 'before we get started'." }
+      ],
+      "how_to_detect": {
+        "method": "regex",
+        "description": "Intro phrases in the first 5 s.",
+        "patterns": ["(?i)\\b(welcome (back )?to|my name is|this is [A-Z][a-z]+ (and|here))\\b", "(?i)\\bsmash (that|the) like\\b"]
+      },
+      "how_to_stage_in_stickman": "Overrides stickman-kino's intro presets (repo-analysis C8). The frame-0 hook card replaces them.",
+      "arc_stage": "golden-hook",
+      "severity": "must"
+    }
+  ]
+}

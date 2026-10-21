@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/raquib-dev/viral-stickman-studio/docs/research/virality-blueprint.schema.json",
+  "title": "Virality blueprint",
+  "description": "Machine-readable rulebook the app applies when labelling transcripts, placing beats and annotating Phase A.",
+  "type": "object",
+  "required": ["version", "updated", "disclaimer", "evidence_scale", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "updated": { "type": "string", "format": "date" },
+    "disclaimer": { "type": "string", "minLength": 20 },
+    "evidence_scale": {
+      "type": "object",
+      "required": ["official", "strong", "moderate", "weak", "pack", "lore"],
+      "additionalProperties": { "type": "string" }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 9,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "format": { "enum": ["shorts", "reels", "long"] },
+    "rule_type": {
+      "enum": [
+        "hook-placement",
+        "rehook-cadence",
+        "pattern-interrupt-cadence",
+        "callout-placement",
+        "deliberate-mistake-placement",
+        "stakes-line",
+        "payoff-timing",
+        "cta-placement",
+        "loop-ending",
+        "frame-zero-motion",
+        "text-safe-zone",
+        "end-screen-hold",
+        "no-intro"
+      ]
+    },
+    "timing": {
+      "type": "object",
+      "required": ["mode", "formats"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["seconds", "percent"], "description": "Unit of from/to: absolute seconds from the start, or % of runtime." },
+        "from": { "type": "number", "minimum": 0 },
+        "to": { "type": "number", "minimum": 0 },
+        "from_end": { "type": "boolean", "description": "If true, from/to count backwards from the end of the video." },
+        "every": { "type": "number", "exclusiveMinimum": 0, "description": "Repeating cadence in the same unit as mode." },
+        "min_count": { "type": "integer", "minimum": 0 },
+        "max_count": { "type": "integer", "minimum": 0 },
+        "formats": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/format" } },
+        "profile_overridable": { "type": "boolean", "description": "True when the niche pattern profile may move this window." },
+        "note": { "type": "string" }
+      },
+      "allOf": [
+        { "if": { "properties": { "mode": { "const": "percent" } } },
+          "then": { "properties": { "from": { "maximum": 100 }, "to": { "maximum": 100 } } } }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["url", "strength", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "pattern": "^(https://|repo:)" },
+        "strength": { "enum": ["official", "strong", "moderate", "weak", "pack", "lore"] },
+        "note": { "type": "string", "minLength": 5 }
+      }
+    },
+    "detect": {
+      "type": "object",
+      "required": ["method", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "enum": ["regex", "llm", "tool", "regex+llm"] },
+        "description": { "type": "string", "minLength": 10 },
+        "patterns": { "type": "array", "items": { "type": "string", "minLength": 2 } },
+        "tool": { "type": "string" },
+        "llm_question": { "type": "string" }
+      },
+      "allOf": [
+        { "if": { "properties": { "method": { "enum": ["regex", "regex+llm"] } } },
+          "then": { "required": ["patterns"], "properties": { "patterns": { "minItems": 1 } } } },
+        { "if": { "properties": { "method": { "enum": ["llm", "regex+llm"] } } },
+          "then": { "required": ["llm_question"] } },
+        { "if": { "properties": { "method": { "const": "tool" } } },
+          "then": { "required": ["tool"] } }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "type", "rule", "timing", "mechanism", "evidence", "how_to_detect", "how_to_stage_in_stickman"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]+$" },
+        "type": { "$ref": "#/$defs/rule_type" },
+        "rule": { "type": "string", "minLength": 15 },
+        "timing": { "$ref": "#/$defs/timing" },
+        "mechanism": { "type": "string", "minLength": 15 },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+        "how_to_detect": { "$ref": "#/$defs/detect" },
+        "how_to_stage_in_stickman": { "type": "string", "minLength": 15 },
+        "misuse": { "type": "string" },
+        "arc_stage": { "enum": ["golden-hook", "disrupting-assumptions", "insider-secrets", "ultimate-truth", "elevation-discussion", "any"] },
+        "severity": { "enum": ["must", "should", "may"] }
+      }
+    }
+  }
+}

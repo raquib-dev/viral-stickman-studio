@@ -21,3 +21,7 @@ node_modules/
 # os
 .DS_Store
 Thumbs.db
+/frontend/node_modules/
+/frontend/test-results/
+/frontend/playwright-report/
+*.tsbuildinfo

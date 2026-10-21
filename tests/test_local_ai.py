@@ -201,3 +201,20 @@ async def test_local_stickman_render_stage_records_progress(monkeypatch):
     assert statuses[0] == "queued" and "rendering" in statuses and statuses[-1] == "done"
     assert db.get_job(job_id)["cost_usd"] == 0
     await manager.stop()
+
+
+def test_ui_build_stale_detects_old_dist(tmp_path, monkeypatch):
+    import os
+    from backend.app import main
+    (tmp_path / "frontend" / "src").mkdir(parents=True)
+    (tmp_path / "frontend" / "dist").mkdir()
+    src, built = tmp_path / "frontend/src/a.tsx", tmp_path / "frontend/dist/index.html"
+    built.write_text("<body></body>")
+    src.write_text("x")
+    monkeypatch.setattr(main.paths, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(main.paths, "FRONTEND_DIST", tmp_path / "frontend" / "dist")
+    os.utime(built, (1000, 1000))
+    os.utime(src, (5000, 5000))
+    assert main.ui_build_stale() is True
+    os.utime(built, (9000, 9000))
+    assert main.ui_build_stale() is False

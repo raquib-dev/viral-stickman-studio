@@ -40,7 +40,7 @@ If `ffmpeg` is still not found, put its full paths in `.env` (`FFMPEG_PATH=C:\ff
 cd C:\src
 git clone https://github.com/raquib-dev/viral-stickman-studio.git
 cd viral-stickman-studio
-git checkout claude/optimistic-meitner-km62vw      # until the PR is merged
+git checkout feature/local-ai-backends               # API + local options; until it is merged
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1                         # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
@@ -68,6 +68,16 @@ python -m uvicorn backend.app.main:app --port 8000
 
 Open **http://localhost:8000**. The sample niche is pre-filled. **Settings → Dry run** is on by default,
 so your first run costs $0 and needs no keys.
+
+**After every `git pull` or branch switch, rebuild the UI and restart the server**, or you keep seeing
+the old screens (the server serves the built copy in `frontend/dist`, which is not in git):
+
+```powershell
+cd frontend; npm install; npm run build; cd ..
+python -m uvicorn backend.app.main:app --port 8000      # then Ctrl+F5 in the browser
+```
+
+If you forget, the server prints a warning at startup and the page shows an orange "old build" banner.
 
 Developing the UI? Run `npm run dev` inside `frontend/` and open http://localhost:5173 (it proxies
 `/api` to port 8000).

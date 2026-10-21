@@ -24,8 +24,28 @@ from .jobs import REGISTRY, bus, manager
 from .settings import CONFIG, load_settings, public_settings, reload_env, save_settings
 
 
+def ui_build_stale() -> bool:
+    """True when frontend/src is newer than the built UI in frontend/dist (FastAPI serves the build, so
+    after a git pull or branch switch the old screens keep showing until `npm run build`)."""
+    built = paths.FRONTEND_DIST / "index.html"
+    src = paths.REPO_ROOT / "frontend" / "src"
+    if not built.exists() or not src.exists():
+        return False
+    newest = max((f.stat().st_mtime for f in src.rglob("*") if f.is_file()), default=0.0)
+    return newest > built.stat().st_mtime + 1
+
+
+STALE_BANNER = ("<div style=\"position:fixed;top:0;left:0;right:0;z-index:9999;background:#b45309;color:#fff;"
+                "font:600 14px system-ui;padding:8px 14px;text-align:center\">This page is an old build of the UI: "
+                "the code changed since it was built. In the frontend folder run <code>npm install</code> and "
+                "<code>npm run build</code>, restart the server, then press Ctrl+F5.</div>")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if ui_build_stale():
+        print("\n[ui] WARNING: frontend/dist is older than frontend/src. You are seeing an OLD UI.\n"
+              "[ui]          cd frontend && npm install && npm run build, then restart this server.\n")
     await manager.start()
     yield
     await manager.stop()
@@ -95,7 +115,7 @@ def _snapshot(slug: str) -> dict:
 @app.get("/api/health")
 def health() -> dict:
     s = load_settings()
-    return {"ok": True, "dry_run": s.get("dry_run", True), "time": time.time(),
+    return {"ok": True, "dry_run": s.get("dry_run", True), "time": time.time(), "ui_build_stale": ui_build_stale(),
             "agent_provider": s["agent"]["provider"], "render_backend": s["render"]["backend"]}
 
 
@@ -497,4 +517,9 @@ if paths.FRONTEND_DIST.exists():
         f = paths.FRONTEND_DIST / full_path
         if full_path and f.is_file():
             return FileResponse(f)
-        return FileResponse(paths.FRONTEND_DIST / "index.html")
+        index = paths.FRONTEND_DIST / "index.html"
+        if ui_build_stale():  # works even in an old build, since the server adds it
+            from fastapi.responses import HTMLResponse
+            html = index.read_text(encoding="utf-8").replace("<body>", "<body>" + STALE_BANNER, 1)
+            return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})

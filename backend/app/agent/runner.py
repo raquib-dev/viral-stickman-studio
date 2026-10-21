@@ -52,6 +52,24 @@ def _validate(task: AgentTask, data: Any) -> None:
                          "; ".join(f"{list(e.path)}: {e.message}" for e in errs[:5]))
 
 
+def build_options(task: AgentTask, settings: dict):
+    """ClaudeAgentOptions for one skill call: project + user skills, read-only tools, structured output."""
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    env = {}
+    if has_secret("ANTHROPIC_API_KEY"):
+        env["ANTHROPIC_API_KEY"] = secret("ANTHROPIC_API_KEY")  # in-memory only, never logged
+    return ClaudeAgentOptions(
+        cwd=str(REPO_ROOT), setting_sources=["user", "project"], skills=task.skills or None,
+        allowed_tools=READ_ONLY_TOOLS + [f"Skill({s})" for s in task.skills],
+        disallowed_tools=DENIED_TOOLS, permission_mode="dontAsk",
+        model=settings["models"].get(task.model_key, settings["models"]["direction"]),
+        max_budget_usd=float(settings.get("agent_budget_per_stage_usd", 2.0)),
+        system_prompt={"type": "preset", "preset": "claude_code", "append": SYSTEM_APPEND},
+        output_format={"type": "json_schema", "schema": task.schema}, env=env,
+    )
+
+
 class SdkAgent:
     kind = "claude-agent-sdk"
 
@@ -59,23 +77,13 @@ class SdkAgent:
         self.settings = settings
 
     async def run(self, task: AgentTask, ctx) -> dict:
-        from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, ToolUseBlock, query
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock, query
 
         model = self.settings["models"].get(task.model_key, self.settings["models"]["direction"])
-        env = {}
-        if has_secret("ANTHROPIC_API_KEY"):
-            env["ANTHROPIC_API_KEY"] = secret("ANTHROPIC_API_KEY")  # in-memory only
         last_err = None
         prompt = task.prompt
         for attempt in (1, 2):
-            opts = ClaudeAgentOptions(
-                cwd=str(REPO_ROOT), setting_sources=["user", "project"], skills=task.skills or None,
-                allowed_tools=READ_ONLY_TOOLS + ([f"Skill({s})" for s in task.skills]),
-                disallowed_tools=DENIED_TOOLS, permission_mode="dontAsk", model=model,
-                max_budget_usd=float(self.settings.get("agent_budget_per_stage_usd", 2.0)),
-                system_prompt={"type": "preset", "preset": "claude_code", "append": SYSTEM_APPEND},
-                output_format={"type": "json_schema", "schema": task.schema}, env=env,
-            )
+            opts = build_options(task, self.settings)
             ctx.log(f"agent[{task.name}] model={model} skills={','.join(task.skills) or '-'} attempt {attempt}")
             result = None
             try:

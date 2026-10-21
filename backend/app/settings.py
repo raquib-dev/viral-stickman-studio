@@ -86,7 +86,9 @@ DEFAULTS: dict[str, Any] = {
         "provider": "claude",
         "max_attempts": 3,
         "local": {"base_url": "http://localhost:11434/v1", "model": "qwen3:8b", "temperature": 0.4,
-                  "max_tokens": 8192, "timeout_s": 900, "skill_chars": 14000},
+                  "max_tokens": 8192, "timeout_s": 900, "skill_chars": 14000,
+                  # Ollama only (native API): context window, reasoning on/off, how long the model stays loaded
+                  "num_ctx": 8192, "think": False, "keep_alive": "5m"},
     },
     "render": {
         "comfyui": {"url": "http://127.0.0.1:8188", "t2v_workflow": "config/comfyui/wan21-t2v-1.3b.json",

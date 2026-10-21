@@ -79,7 +79,11 @@ export default function Settings() {
             <label className="text-sm">Temperature<input className="input" type="number" min={0} max={1.5} step={0.1} value={s.agent.local.temperature} onChange={(e) => set(["agent", "local", "temperature"], Number(e.target.value))} /></label>
             <label className="text-sm">Max output tokens<input className="input" type="number" value={s.agent.local.max_tokens} onChange={(e) => set(["agent", "local", "max_tokens"], Number(e.target.value))} /></label>
             <label className="text-sm">Timeout per call (s)<input className="input" type="number" value={s.agent.local.timeout_s} onChange={(e) => set(["agent", "local", "timeout_s"], Number(e.target.value))} /></label>
-            <p className="text-xs text-ink-3 md:col-span-3">Ollama: <code>http://localhost:11434/v1</code>, model <code>qwen3:8b</code> (≈5 GB, fits 8 GB VRAM). LM Studio: <code>http://localhost:1234/v1</code>. Local models are weaker than Claude at long direction prompts; hybrid keeps Claude for Phase A/B only.</p>
+            <label className="text-sm">Context tokens (Ollama)<select className="input" value={s.agent.local.num_ctx} onChange={(e) => set(["agent", "local", "num_ctx"], Number(e.target.value))} data-testid="num-ctx">
+              {[4096, 8192, 12288, 16384, 32768].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!s.agent.local.think} onChange={(e) => set(["agent", "local", "think"], e.target.checked)} />
+              Let the model think first (qwen3: better, about 2-3× slower)</label>
+            <p className="text-xs text-ink-3 md:col-span-3">Ollama: <code>http://localhost:11434/v1</code>, model <code>qwen3:8b</code> (≈5 GB, fits 8 GB VRAM) or <code>qwen3:14b</code> (≈9 GB: part runs on the CPU, slower; needs 16 GB+ RAM). LM Studio: <code>http://localhost:1234/v1</code>. Local models are weaker than Claude at long direction prompts; hybrid keeps Claude for Phase A/B only.</p>
           </div>
         )}
       </Section>
@@ -132,7 +136,7 @@ function LocalServices() {
             {st.gpu?.ok ? `${st.gpu.name} · ${st.gpu.vram_used_gb}/${st.gpu.vram_total_gb} GB used · driver ${st.gpu.driver}` : st.gpu?.error}</Row>
           <Row ok={st.llm?.ok && st.llm?.model_present} name="Local LLM" fix={st.llm?.ok ? <>Model missing: <code>ollama pull {st.llm.model}</code></> : <>Install Ollama, then <code>ollama pull {st.llm?.model}</code> (server at {st.llm?.url}).</>}>
             {st.llm?.ok ? `${st.llm.url} · ${st.llm.models.length} model(s)${st.llm.model_present ? ` · ${st.llm.model} ready` : ""}` : `not reachable at ${st.llm?.url}`}</Row>
-          <Row ok={st.comfyui?.ok} name="ComfyUI" fix="Only needed for the local-comfyui backend. Start ComfyUI (python main.py) and load the Wan 2.1 1.3B models.">
+          <Row ok={st.comfyui?.ok} name="ComfyUI" fix="Only needed for the local-comfyui backend. Start ComfyUI (run_nvidia_gpu.bat) with the three Wan 2.1 1.3B files in its models folders: README → ComfyUI on Windows.">
             {st.comfyui?.ok ? `${st.comfyui.url} · ${st.comfyui.device ?? "device ?"} · ${st.comfyui.vram_free_gb} GB free` : `not reachable at ${st.comfyui?.url}`}</Row>
           <Row ok={st.stickman?.ok} name="Stickman animator" fix={st.stickman?.error}>{st.stickman?.ok ? "ready (Pillow + ffmpeg)" : ""}</Row>
           <Row ok={st.tts?.kokoro || st.tts?.piper} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx</>}>

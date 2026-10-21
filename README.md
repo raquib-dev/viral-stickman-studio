@@ -192,16 +192,46 @@ pip install torch --index-url https://download.pytorch.org/whl/cu128
 Then in Settings: turn **Dry run** off, Writing model → **Local LLM only** (or **Hybrid**), Render →
 **local-stickman**, Voiceover → **auto**. Local renders skip the cost gate (they cost $0).
 
-**ComfyUI (optional, AI-generated video on your GPU):** install ComfyUI, download the Wan 2.1 T2V 1.3B
-files (`wan2.1_t2v_1.3B_fp16.safetensors`, `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`)
-into its `models/diffusion_models`, `models/text_encoders` and `models/vae` folders, start it, and pick
-**local-comfyui**. The app fills `config/comfyui/wan21-t2v-1.3b.json` (ComfyUI API format, with
-`{{PROMPT}}`, `{{WIDTH}}`, `{{HEIGHT}}`, `{{FRAMES}}`, `{{FPS}}`, `{{SEED}}`; `{{IMAGE}}` for an image-to-video
-workflow). To use your own workflow, export it with *Save (API format)* and put the placeholders in.
-Wan 1.3B makes about 5 s (81 frames at 16 fps) at 832×480; the app crops it to your ratio and slows it to
-fill the 10 s clip. It takes minutes per clip on an 8 GB laptop GPU, and has no sound, so the local
-voiceover is added. Out-of-memory errors are shown on the clip card and are not retried: lower Frames or
-the generation size.
+### ComfyUI on Windows (optional: AI-generated video on your GPU)
+
+1. **Download ComfyUI portable**: https://github.com/comfyanonymous/ComfyUI/releases → latest release →
+   `ComfyUI_windows_portable_nvidia.7z`. Extract it with 7-Zip to a short path, e.g. `C:\ComfyUI`. The portable
+   build ships its own Python and a PyTorch for recent NVIDIA cards, so nothing else to install.
+2. **Download the three Wan 2.1 files** from https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/tree/main/split_files
+   (click each file → *download*), and put them here:
+
+   | File | Folder |
+   |---|---|
+   | `diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors` (≈2.8 GB) | `C:\ComfyUI\ComfyUI\models\diffusion_models\` |
+   | `text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors` (≈6.7 GB) | `C:\ComfyUI\ComfyUI\models\text_encoders\` |
+   | `vae/wan_2.1_vae.safetensors` (≈250 MB) | `C:\ComfyUI\ComfyUI\models\vae\` |
+
+   The names must match exactly: the app's workflow `config/comfyui/wan21-t2v-1.3b.json` uses them.
+3. **Start it**: double-click `C:\ComfyUI\run_nvidia_gpu.bat`. Leave the window open; it is ready when it
+   prints `To see the GUI go to: http://127.0.0.1:8188`.
+4. **Check from the app**: Settings → Local services → **↻ Check**. The ComfyUI row turns green and shows your
+   GPU and free VRAM.
+5. **Render**: Settings → Render → Backend **local-comfyui** → Save. Start with a 30 s project. Each clip takes
+   several minutes on an 8 GB laptop GPU; the clip card shows "generating on GPU… 120s" while it works.
+
+If the clip card says *ComfyUI rejected the workflow*, a file name in step 2 does not match. If it says
+*GPU out of memory*, set Settings → Render → ComfyUI → Frames to 49 (about 3 s). Close games and other GPU
+apps while rendering. When writing also runs locally, the app unloads the Ollama model before a ComfyUI
+render so both never sit in the 8 GB at once.
+
+To use your own workflow, export it in ComfyUI with *Save (API format)* (turn on dev mode in the
+settings first) and put `{{PROMPT}}`, `{{NEGATIVE}}`, `{{WIDTH}}`, `{{HEIGHT}}`, `{{FRAMES}}`, `{{FPS}}`, `{{SEED}}`
+(and `{{IMAGE}}` for image-to-video) in place of those values.
+
+### Which local writing model?
+
+| Model | Size | On an 8 GB GPU | Use it for |
+|---|---|---|---|
+| `qwen3:8b` | ≈5 GB | Fully on the GPU: fast | The default. Fine for everything now that the app inserts the Phase B blocks |
+| `qwen3:14b` | ≈9 GB | Does not fit: Ollama runs part of it on the CPU. Slower; needs 16 GB+ system RAM | Better hooks and scripts if you can wait |
+
+Ollama is used through its native API: the app sets the context size per call (Settings → Writing model →
+Context tokens, default 8192) and warns in the log if a prompt or reply was cut.
 
 **Honest limits.** A local 8B model writes noticeably weaker hooks and much weaker Phase A/B direction
 than Claude: use Hybrid if you can. local-stickman draws simple, consistent figures from keywords in

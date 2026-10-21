@@ -149,6 +149,9 @@ async def render(ctx) -> dict:
         backend = get_backend(backend_name)
     except RenderError as e:
         raise StageError(str(e)) from e
+    if backend_name == "local-comfyui" and ctx.settings["agent"]["provider"] in ("local", "hybrid"):
+        from ..agent.local import unload
+        await unload(ctx.settings, ctx.log)
     prev: ClipResult | None = None
     if todo[0].index > 0:
         prev_png = ctx.path(f"clips/clip-{todo[0].index:02d}.last.png")

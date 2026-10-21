@@ -248,3 +248,36 @@ def test_phase_b_claude_output_left_alone_when_valid():
     before = [p["text"] for p in res["prompts"]]
     assert assemble_phase_b(res, "1", "dark", "male", app_inserts=False) == []
     assert [p["text"] for p in res["prompts"]] == before and check_phase_b(res, 2, "1", "dark") == []
+
+
+async def test_ollama_native_api_sets_context_and_warns_on_overflow():
+    seen = {}
+
+    def handler(req: httpx.Request):
+        if req.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.12.0"})
+        if req.url.path == "/api/chat":
+            seen["body"] = json.loads(req.content)
+            return httpx.Response(200, json={"message": {"content": '{"title": "t", "n": 1}'},
+                                             "prompt_eval_count": 8100, "eval_count": 90, "done_reason": "stop"})
+        return httpx.Response(404)
+
+    s = _settings(provider="local")
+    s["agent"]["local"] = {**s["agent"]["local"], "base_url": "http://localhost:11434/v1", "num_ctx": 8192}
+    ctx = Ctx()
+    out = await la.LocalAgent(s, transport=httpx.MockTransport(handler)).run(AgentTask("x", "p", SCHEMA), ctx)
+    assert out == {"title": "t", "n": 1}
+    b = seen["body"]
+    assert b["options"]["num_ctx"] == 8192 and b["format"] == SCHEMA and b["think"] is False
+    assert any("filled the 8192-token context" in t for _, t in ctx.lines)
+
+
+async def test_ollama_missing_model_says_how_to_pull():
+    def handler(req):
+        if req.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.12.0"})
+        return httpx.Response(404, json={"error": "model not found"})
+    s = _settings(provider="local")
+    s["agent"]["local"] = {**s["agent"]["local"], "model": "qwen3:14b"}
+    with pytest.raises(AgentError, match="ollama pull qwen3:14b"):
+        await la.LocalAgent(s, transport=httpx.MockTransport(handler)).run(AgentTask("x", "p", SCHEMA), Ctx())

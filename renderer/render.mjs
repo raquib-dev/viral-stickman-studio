@@ -72,14 +72,26 @@ try {
     "-framerate", String(info.fps), "-c:v", "png", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p",
     "-preset", "medium", "-crf", String(scene.crf ?? 16), "-movflags", "+faststart", out], { stdio: ["pipe", "inherit", "inherit"] });
   const done = new Promise((res, rej) => ff.on("close", (c) => (c === 0 ? res() : rej(new Error(`ffmpeg exited ${c}`)))));
+  // quality report: near-black frames that no fade/iris/wipe explains, blown-out frames, exposure guard use
+  const qa = { frames: 0, black: [], blown: [], guarded: 0, minGuard: 1, meanLuma: 0 };
   for (let i = 0; i < info.frames; i++) {
-    const data = await page.evaluate((k) => window.vss.frame(k), i);
+    const { data, stats } = await page.evaluate((k) => window.vss.frameWithStats(k), i);
+    if (!data?.startsWith("data:image/png")) throw new Error(`frame ${i} came back empty`);
     const buf = Buffer.from(data.slice(data.indexOf(",") + 1), "base64");
     if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once("drain", r));
+    qa.frames++; qa.meanLuma += stats.mean;
+    const transition = stats.fade > 0.3 || stats.iris >= 0 || stats.wipe >= 0;
+    if (stats.mean < (scene.qa?.black_luma ?? 10) && !transition) qa.black.push(i);
+    if (stats.clipped > (scene.qa?.blown_share ?? 0.25)) qa.blown.push(i);
+    if (stats.guard < 0.999) { qa.guarded++; qa.minGuard = Math.min(qa.minGuard, stats.guard); }
     if (i % 12 === 0 || i === info.frames - 1) emit({ event: "progress", frame: i + 1, frames: info.frames, seconds: (Date.now() - t0) / 1000 });
   }
   ff.stdin.end();
   await done;
+  const runs = (xs) => xs.reduce((acc, x) => { const r = acc[acc.length - 1]; if (r && x === r[1] + 1) r[1] = x; else acc.push([x, x]); return acc; }, [])
+    .map(([a, b]) => [+(a / info.fps).toFixed(2), +((b + 1) / info.fps).toFixed(2)]);
+  emit({ event: "qa", frames: qa.frames, expected: info.frames, fps: info.fps, mean_luma: +(qa.meanLuma / Math.max(1, qa.frames)).toFixed(1),
+    black: runs(qa.black), blown: runs(qa.blown), guarded_frames: qa.guarded, min_exposure_scale: +qa.minGuard.toFixed(3) });
   emit({ event: "done", out, seconds: (Date.now() - t0) / 1000 });
 } catch (e) {
   if (e === null) { /* --catalog / --stills finished early */ } else {

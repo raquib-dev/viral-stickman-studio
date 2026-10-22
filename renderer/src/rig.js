@@ -39,7 +39,7 @@ const SPINE_R = 0.04;
 // Bone names for each logical joint across common humanoid rigs: this project's CC0 rig, Quaternius /
 // Unreal mannequin (upperarm_l, thigh_l...), Mixamo (mixamorig:LeftArm...) and Blender (upper_arm.L...).
 const JOINTS = {
-  Hips: ["hips", "pelvis", "mixamorighips"], Neck: ["neck", "neck01", "mixamorigneck"], Head: ["head", "mixamorighead"],
+  Hips: ["hips", "pelvis", "mixamorighips"], Neck: ["neck", "neck01", "mixamorigneck", "upperchest", "chest", "spine2"], Head: ["head", "mixamorighead"],
   "UpperArm.L": ["upperarml", "mixamorigleftarm", "leftarm", "arml"], "UpperArm.R": ["upperarmr", "mixamorigrightarm", "rightarm", "armr"],
   "LowerArm.L": ["lowerarml", "forearml", "mixamorigleftforearm", "leftforearm"], "LowerArm.R": ["lowerarmr", "forearmr", "mixamorigrightforearm", "rightforearm"],
   "Palm2.L": ["palm2l", "handl", "mixamoriglefthand", "lefthand"], "Palm2.R": ["palm2r", "handr", "mixamorigrighthand", "righthand"],
@@ -51,8 +51,8 @@ const norm = (n) => String(n).toLowerCase().replace(/[^a-z0-9]/g, "");
 // pack clips that replace the base rig's robot moves (first match wins)
 const PACK_ALIASES = {
   Idle: [/^idle$/i, /^idle_?loop$/i, /idle/i], Walking: [/^walk(_?loop)?$/i, /^walk_?f(or)?w(ar)?d/i, /walk/i],
-  Running: [/^(jog|run)(_?f(or)?w(ar)?d)?(_?loop)?$/i, /jog|run|sprint/i], Jump: [/^jump(_?start)?$/i, /jump/i],
-  Sitting: [/^sit(ting)?(_?idle)?(_?loop)?$/i, /sit/i], Standing: [/stand_?up|get_?up/i], Wave: [/wave/i],
+  Running: [/^(jog|run)(_?f(or)?w(ar)?d)?(_?loop)?$/i, /jog|run|sprint/i], Jump: [/^jump(_?start)?$/i, /^jump_?full_?short$/i, /jump/i],
+  Sitting: [/^sit(ting)?(_?idle)?(_?loop)?$/i, /^sit_?chair_?idle$/i, /sit.*idle/i, /sit/i], Standing: [/stand_?up|get_?up/i], Wave: [/wave/i],
   Yes: [/^yes$|nod/i], No: [/^no$|head_?shake/i], ThumbsUp: [/thumb/i], Punch: [/punch/i], Dance: [/dance/i], Death: [/death|die/i],
 };
 
@@ -375,8 +375,13 @@ export class Stickman {
         return [chest.clone().add(V(side * 0.3, -0.22 + w, 0.3)), V(side, -1, -0.2)];
       }
       case "point": default: {
+        // aim at the target, but keep the arm in front of the body and between waist and eye height (a target
+        // far off to the side or behind used to swing a locked-straight arm out of frame)
         const dir = (target ? target.clone().sub(sh) : V(side, 0.1, 0.4)).normalize();
-        return [sh.clone().addScaledVector(dir, (LEN.upperArm + LEN.lowerArm) * 0.97), V(0, -1, 0)];
+        dir.z = Math.max(dir.z, 0.35);
+        dir.y = clamp(dir.y, -0.35, 0.45);
+        dir.normalize();
+        return [sh.clone().addScaledVector(dir, (LEN.upperArm + LEN.lowerArm) * 0.9), V(0, -1, -0.2)];
       }
     }
   }
@@ -518,7 +523,9 @@ export class Stickman {
       sh.addScaledVector(up, 0.004 * breath);
       const free = 1 - busy[sd];
       // relaxed hang: hands slightly forward and out, elbows soft, a slow swing
-      const hangW = idleW * 0.65 * free;
+      // arms the animation holds out from the body (a chibi pack idle stands with them ~45 degrees out) hang more
+      const out = wr.clone().sub(sh).normalize().angleTo(new THREE.Vector3(0, -1, 0));
+      const hangW = idleW * (0.65 + 0.25 * clamp((out - 0.45) / 0.5)) * free;
       if (hangW > 0.01) {
         const swing = noise1(t * 0.35 + (sg > 0 ? 0 : 9), seed) * 0.03;
         const T = sh.clone().add(new THREE.Vector3(sg * 0.06, -0.55, 0.05 + swing));

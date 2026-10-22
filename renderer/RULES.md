@@ -61,7 +61,19 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
 17. **Any humanoid animation pack, retargeted by direction.** A pack's skeleton is matched by bone name
     (this rig, Quaternius/Unreal, Mixamo, Blender), turned to face +Z, and only its bone directions are
     used, so it drives the same stick figure. Core moves prefer the pack's versions; `pack:<clip>` names any
-    other pack clip. Without a pack, everything still works on the base rig.
+    other pack clip. Without a pack, everything still works on the base rig. The repo ships one (KayKit
+    Adventurers, CC0; Blender bone names, no neck bone: its chest stands in).
+18. **Only light sources glow, and no frame blows out.** Bloom starts above linear 1.0, so lit skin and paper
+    cards never haze; the character's colour stays under paper white; each frame renders a tiny linear-HDR
+    copy of itself and lowers exposure (to x0.72 at most) only when its own 96th-percentile highlight would clip.
+    A plan's `exposure`, `bloom` and `handheld` are clamped to safe ranges. Pure in the frame, so stills match.
+19. **One story, no dips to black.** Clips cut straight into each other: `transition` fades only into the
+    first clip and out of the last (applied at plan time and again at render time; an editor-saved plan keeps
+    its own). A close-up is head and shoulders, never closer than 0.75 x its distance, and props stay behind
+    the actor's front line (z ≤ 0.6).
+20. **Every render reports on itself.** render.mjs emits a `qa` event per clip (frames rendered vs expected,
+    near-black frames no fade explains, mostly-white frames, how often the exposure guard acted); stitch writes
+    `final/qa.json` for the whole video (frame count, audio vs video length, black dips, caption overlaps).
 
 ## Scene plan (version 2)
 

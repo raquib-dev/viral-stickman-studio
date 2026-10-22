@@ -244,6 +244,10 @@ async def scene_plan(ctx) -> dict:
             except Exception as e:                                  # a shape the repairer does not know: retry, then keywords
                 fixed, fx, er = candidate, [], [f"the plan has a malformed field ({type(e).__name__}: {str(e)[:120]}); "
                                                 "follow the JSON schema types exactly"]
+            want = tj.seam_transition(sp.index, len(specs), fixed.get("transition"))
+            if want != fixed.get("transition"):
+                fx.append(f"transition {fixed.get('transition')} -> {want} (no fade to black between clips)")
+                fixed["transition"] = want
             if not er:
                 scene, fixes, by, notes = fixed, fx, "fixture (dry run)" if res.get("_fixture") else "ai", res.get("notes", "")
                 break
@@ -286,6 +290,13 @@ async def render(ctx) -> dict:
     if ctx.dry_run and r["backend"] != "mock":
         ctx.log(f"dry run is on: using the mock backend instead of {r['backend']}", "warn")
     specs = _clip_specs(ctx, p)
+    if not ctx.dry_run:
+        from .studio import placeholders
+        gaps = placeholders([{"index": sp.index, "vo": sp.vo} for sp in specs])
+        if gaps:
+            raise StageError("the script still has gaps for you to fill: " + ", ".join(
+                f"{{{{{g['name']}}}}} (clip {', '.join(map(str, g['clips']))})" for g in gaps)
+                + ". Fill them in Studio → Script (the voice would read them out otherwise).")
     only = set(ctx.params.get("only") or [])
     force = bool(ctx.params.get("force"))
     todo = []
@@ -423,7 +434,11 @@ async def stitch_stage(ctx) -> dict:
         words = await th(cap.whisper_words, stitched, ctx.log, cs.get("whisper_model", "base.en"), cs.get("whisper_device", "auto"))
         method = "faster-whisper" if words else "estimate (faster-whisper not installed or failed)"
     if not words:
-        words = cap.estimate_words([c["vo"] for c in s["clips"]], durations=lengths)
+        # the local backends record where the voice really is in each clip; use it so captions follow the audio
+        windows = [ctx.read_json(f"clips/clip-{k:02d}.json", default={}).get("meta", {}).get("speech_window") for k in range(1, n + 1)]
+        words = cap.estimate_words([c["vo"] for c in s["clips"]], durations=lengths, windows=windows)
+        if any(windows):
+            method = "estimate from each clip's voice timing"
     ctx.write_json("final/words.json", {"method": method, "words": words_json(words)})
     ctx.write_text("final/final.srt", to_srt(words))
     # the on-screen card you approved at the hook gate wins over the director's suggestion
@@ -445,12 +460,24 @@ async def stitch_stage(ctx) -> dict:
     from ..render.media import run_ffmpeg
     await th(run_ffmpeg, ["-ss", "1.2", "-i", str(ctx.path("final/final.mp4")), "-frames:v", "1", str(ctx.path("final/poster.png"))])
     ctx.write_json("final/loudness.json", {**report, **info, "caption_timing": method, "safe_zone_violations": violations})
+    # quality report on the exported file (frames, A/V length, unexpected black dips, caption overlaps)
+    ctx.progress(0.9, "quality checks")
+    events = cap.page_events(cap.phrase_pages(cap.dedupe_words(words), int(ctx.settings["captions"].get("words_per_page", 3))))
+    qa = await th(st.final_qa, ctx.path("final/final.mp4"), 24.0, starts, events)
+    clip_qa = {k: ctx.read_json(f"clips/clip-{k:02d}.json", default={}).get("meta", {}).get("qa") for k in range(1, n + 1)}
+    qa["clips"] = {k: v for k, v in clip_qa.items() if v}
+    ctx.write_json("final/qa.json", qa)
+    for prob in qa["problems"]:
+        ctx.log("QA: " + prob, "warn")
+    if not qa["problems"]:
+        ctx.log(f"QA: {qa['frames']} frames, audio and video both {qa['video_seconds']:.2f}s, no unexpected black frames, "
+                "no caption overlaps")
     loud_txt = (f"{report['after_i']:.1f} LUFS (target {report['target_i']})" if report.get("after_i") is not None
                 else "audio is silent, loudness not normalised")
     if report.get("skipped"):
         ctx.log("loudness: " + report["skipped"] + " (the clips have no sound; check the render prompts' audio lines)", "warn")
     ctx.log(f"final.mp4: {info['duration']:.1f}s {info['width']}x{info['height']}, {loud_txt}, captions timed by {method}")
-    return {"outputs": ["final/final.mp4", "final/poster.png", "final/final.srt", "final/captions.ass", "final/words.json", "final/loudness.json"]}
+    return {"outputs": ["final/final.mp4", "final/poster.png", "final/final.srt", "final/captions.ass", "final/words.json", "final/loudness.json", "final/qa.json"]}
 
 
 POLICY_NOTES = [

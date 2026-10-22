@@ -162,10 +162,10 @@ def test_animation_pack_retargets_exactly(tmp_path):
     scene = {"width": 120, "height": 214, "fps": 6, "duration": 3, "style": "minimal", "quality": "draft",
              "actors": [{"id": "hero", "path": [{"t": 0, "pos": [-1, 0, 0]}, {"t": 2, "pos": [0, 0, 0]}], "anim": [{"t": 0, "clip": "Idle"}]}],
              "camera": [{"t": 0, "shot": "full"}]}
-    sp = tmp_path / "s.json"
-    sp.write_text(json.dumps(scene))
     outs = []
     for extra, d in (([], "base"), (["--pack", str(pack)], "pack")):
+        sp = tmp_path / f"{d}.json"                                 # the bundled pack is off for the base run
+        sp.write_text(json.dumps({**scene, "pack": False} if d == "base" else scene))
         r = subprocess.run([shutil.which("node"), str(tj.RENDERER / "render.mjs"), "--scene", str(sp), "--stills", "1.0,2.5",
                             "--out-dir", str(tmp_path / d), *extra], capture_output=True, text=True, timeout=300)
         assert r.returncode == 0, r.stdout[-500:]

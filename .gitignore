@@ -27,4 +27,4 @@ Thumbs.db
 /frontend/test-results/
 /frontend/playwright-report/
 *.tsbuildinfo
-/renderer/public/models/anim-pack.glb
+# the bundled CC0 animation pack (KayKit) is committed; a pack you download yourself replaces it

@@ -51,6 +51,13 @@ const FinishShader = {
 };
 
 const state = { ready: false };
+// Exposure: everything that is not a light source stays below the bloom threshold, and a per-frame highlight
+// guard pulls exposure down only when a frame's own highlights would clip (bright close-ups, white cards).
+// Both are computed from the frame itself, so a frame renders the same in a still and in the video.
+const BLOOM_THRESHOLD = 1.0;          // linear HDR: lit skin and paper stay under it, glows/flames/LEDs go over
+const GUARD = { p: 0.96, max: 0.9, floor: 0.72 };   // percentile, its ceiling after exposure, lowest exposure scale
+const INK_MAX_LUM = 0.62;             // linear luminance cap for the character's colour (cream, not paper white)
+const num = (v, lo, hi, d) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 const V = (a) => new THREE.Vector3(a[0], a[1] ?? 0, a[2] ?? 0);
 
 /** Style, theme and mood track from a scene (with Phase 1 "theme" names still accepted). */
@@ -79,7 +86,7 @@ async function load(spec) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = spec.exposure ?? (look.theme === "light" ? 0.95 : 1.0);
+  renderer.toneMappingExposure = num(spec.exposure, 0.7, 1.2, look.theme === "light" ? 0.95 : 1.0);
   document.body.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
   scene.background = new THREE.Color();
@@ -113,7 +120,9 @@ async function load(spec) {
   composer.addPass(new RenderPass(scene, camera));
   const q = spec.quality ?? "high";
   const bl = spec.bloom ?? {};
-  if (q !== "draft") composer.addPass(new UnrealBloomPass(new THREE.Vector2(W, H), bl.strength ?? style.post.bloom, bl.radius ?? 0.45, bl.threshold ?? 0.85));
+  const bloom = q === "draft" ? null : new UnrealBloomPass(new THREE.Vector2(W, H), num(bl.strength, 0, 1.0, style.post.bloom),
+    num(bl.radius, 0.1, 0.8, 0.45), num(bl.threshold, 0.9, 3, BLOOM_THRESHOLD));
+  if (bloom) composer.addPass(bloom);
   let bokeh = null;
   if (q === "high" && spec.dof !== false) {
     bokeh = new BokehPass(scene, camera, { focus: 3.5, aperture: spec.dof?.aperture ?? 0.0012, maxblur: spec.dof?.maxblur ?? 0.006 });
@@ -128,8 +137,12 @@ async function load(spec) {
 
   const gl = renderer.getContext();
   const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+  // highlight guard: a tiny linear-HDR render of the same view (float target; skipped where unsupported)
+  const canFloat = renderer.capabilities.isWebGL2 && !!gl.getExtension("EXT_color_buffer_float");
+  const probe = canFloat && spec.guard !== false ? new THREE.WebGLRenderTarget(36, Math.round(36 * H / W), { type: THREE.FloatType }) : null;
   Object.assign(state, {
     spec, look, palettes, renderer, scene, camera, composer, actors, props, elements, bokeh, finish, set, lights, propMats, W, H,
+    bloom, probe, exposure0: renderer.toneMappingExposure, bloom0: bloom?.threshold ?? BLOOM_THRESHOLD,
     vertical: H > W, fps: spec.fps ?? 24, frames: Math.round((spec.duration ?? 10) * (spec.fps ?? 24)),
     gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "unknown",
   });
@@ -173,7 +186,8 @@ function actorMotion(a, t) {
 
 const SHOTS = {
   // [distance, camera height above floor, look height, fov] for a 9:16 frame (16:9 pulls in a little)
-  closeup: [1.25, 1.62, 1.58, 32], medium: [3.0, 1.45, 1.2, 36], wide: [5.0, 1.9, 1.0, 40],
+  // closeup = head and shoulders with the head in the upper third (a tighter frame cut the head and blew out)
+  closeup: [1.9, 1.55, 1.4, 34], medium: [3.0, 1.45, 1.2, 36], wide: [5.0, 1.9, 1.0, 40],
   low: [2.4, 0.55, 1.3, 38], high: [3.4, 3.2, 0.9, 38], full: [3.8, 1.3, 0.95, 36],
 };
 
@@ -188,7 +202,7 @@ function resolveKey(key, t) {
   if (!key.shot) return { pos: V(key.pos), look: V(key.look), fov: key.fov ?? 35 };
   const s = typeof key.shot === "string" ? { type: key.shot } : key.shot;
   const [dist0, camY, lookY, fov] = SHOTS[s.type] ?? SHOTS.medium;
-  const dist = dist0 * (state.vertical ? 1 : 0.8) * (s.zoom ?? 1);
+  const dist = dist0 * (state.vertical ? 1 : 0.8) * num(s.zoom, 0.75, 1.6, 1);
   const ids = [].concat(s.target ?? state.actors[0]?.id ?? []);
   let centre;
   if (s.type === "two_shot" || ids.length > 1) {
@@ -209,7 +223,7 @@ function resolveKey(key, t) {
   const base = head.clone().setY(0);
   const ang = (s.angle ?? 0) + (s.side ?? 0);
   const pos = base.clone().add(new THREE.Vector3(Math.sin(ang) * dist, camY, Math.cos(ang) * dist));
-  const lookAt = base.clone().add(new THREE.Vector3(0, s.type === "closeup" ? head.y - 0.04 : lookY, 0));
+  const lookAt = base.clone().add(new THREE.Vector3(0, s.type === "closeup" ? head.y - 0.22 : lookY, 0));
   return { pos, look: lookAt, fov };
 }
 
@@ -222,7 +236,7 @@ function placeCamera(t) {
   const pos = a.pos.lerp(b.pos, k), look = a.look.lerp(b.look, k);
   if (sg.b.orbit) pos.sub(look).applyAxisAngle(new THREE.Vector3(0, 1, 0), sg.b.orbit * k).add(look);
   camera.fov = lerp(a.fov, b.fov, k);
-  const shake = spec.handheld ?? 0.012;
+  const shake = num(spec.handheld, 0, 0.03, 0.012);
   pos.x += noise1(t * 0.7, 3) * shake; pos.y += noise1(t * 0.6, 4) * shake;
   camera.position.copy(pos);
   camera.lookAt(look);
@@ -284,7 +298,11 @@ function frame(i) {
   });
   placeCamera(t);
   const resolve = resolver(t);
-  state.actors.forEach((a, k) => a.rig.update(a.spec, t, { speed: motions[k].speed, dist: motions[k].dist, resolve, ink: a.spec.color ? null : pal.ink }));
+  const ink = capLum(pal.ink.clone(), INK_MAX_LUM);
+  state.actors.forEach((a, k) => {
+    a.rig.update(a.spec, t, { speed: motions[k].speed, dist: motions[k].dist, resolve, ink: a.spec.color ? null : ink });
+    if (a.spec.color) capLum(a.rig.mat.color.set(a.spec.color), INK_MAX_LUM);
+  });
   state.props.forEach((p, k) => {
     const hold = p.spec.hold;
     let hand = null;
@@ -302,8 +320,58 @@ function frame(i) {
   const u = state.finish.uniforms;
   u.uFrame.value = i; u.uSat.value = pal.sat; u.uContrast.value = pal.contrast; u.uWarm.value = pal.warm;
   transitions(t, pal);
+  const scale = guardExposure();
   state.composer.render();
+  state.last = { i, t, guard: scale, fade: u.uFade.value, iris: u.uIris.value, wipe: u.uWipe.value };
   return state.renderer.domElement.toDataURL("image/png");
+}
+
+/** Scale a colour down (keeping its hue) so its linear luminance is at most `max`. */
+function capLum(c, max) {
+  const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  return l > max ? c.multiplyScalar(max / l) : c;
+}
+
+/** Per-frame highlight guard: the frame's own linear luminance at the GUARD.p percentile must land at or under
+ *  GUARD.max after exposure. Lowers exposure (never below GUARD.floor of the base) and raises the bloom
+ *  threshold by the same factor, so a bright close-up keeps its detail and a dark scene is left alone. */
+function guardExposure() {
+  const { renderer, probe, scene, camera } = state;
+  if (!probe) return 1;
+  renderer.setRenderTarget(probe);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  const px = new Float32Array(probe.width * probe.height * 4);
+  renderer.readRenderTargetPixels(probe, 0, 0, probe.width, probe.height, px);
+  const lum = [];
+  for (let k = 0; k < px.length; k += 4) lum.push(0.2126 * px[k] + 0.7152 * px[k + 1] + 0.0722 * px[k + 2]);
+  lum.sort((a, b) => a - b);
+  const hi = lum[Math.min(lum.length - 1, Math.floor(lum.length * GUARD.p))] * state.exposure0;
+  const scale = hi > GUARD.max ? Math.max(GUARD.floor, GUARD.max / hi) : 1;
+  renderer.toneMappingExposure = state.exposure0 * scale;
+  if (state.bloom) state.bloom.threshold = state.bloom0 / scale;
+  return scale;
+}
+
+/** Quality numbers for the frame just rendered (mean luma 0-255, clipped share, transition state). */
+function stats() {
+  const gl = state.renderer.getContext();
+  const { W, H } = state;
+  const px = new Uint8Array(W * H * 4);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  let sum = 0, clip = 0, n = 0;
+  for (let k = 0; k < px.length; k += 4 * 7) {
+    const y = 0.2126 * px[k] + 0.7152 * px[k + 1] + 0.0722 * px[k + 2];
+    sum += y; n++;
+    if (y >= 250) clip++;
+  }
+  return { ...state.last, mean: sum / n, clipped: clip / n };
+}
+
+/** One frame plus its stats (render.mjs uses this for the per-clip quality report). */
+function frameWithStats(i) {
+  const data = frame(i);
+  return { data, stats: stats() };
 }
 
 /** What this build supports, checked against catalog.json (shared with the Python planner). */
@@ -313,4 +381,4 @@ function liveCatalog() {
     transitions: ["none", "fade", "iris", "wipe"], asset_shapes: ASSET_SHAPES, asset_colors: ASSET_COLORS, asset_motions: ASSET_MOTIONS };
 }
 
-window.vss = { load, frame, catalog: liveCatalog, fileCatalog: catalog, get ready() { return true; } };
+window.vss = { load, frame, frameWithStats, stats, catalog: liveCatalog, fileCatalog: catalog, get ready() { return true; } };

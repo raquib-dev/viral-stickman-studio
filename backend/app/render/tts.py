@@ -20,6 +20,7 @@ from pathlib import Path
 from .media import arun_ffmpeg, probe
 
 KOKORO_RATE = 24000
+VO_LEAD = 0.25   # seconds of quiet before the narrator starts inside a clip (after trimming the engine's own silence)
 
 
 class TTSUnavailable(RuntimeError):
@@ -139,8 +140,29 @@ def elevenlabs_voices(transport=None) -> list[dict]:
                 for x in r.json().get("voices", [])]
 
 
+def trim_silence(wav: Path, threshold_db: float = -45.0) -> Path:
+    """Cut the quiet the engines put before and after the speech (Kokoro adds ~0.2-0.4 s each side), so the
+    clip's own lead decides when the voice starts and seams do not collect seconds of dead air."""
+    from .media import run_ffmpeg
+    tmp = wav.with_suffix(".trim.wav")
+    try:
+        sr = f"silenceremove=start_periods=1:start_threshold={threshold_db}dB:start_silence=0.05"
+        run_ffmpeg(["-i", str(wav), "-af", f"{sr},areverse,{sr},areverse", "-c:a", "pcm_s16le", str(tmp)])
+        if probe(tmp)["duration"] > 0.3:
+            tmp.replace(wav)
+    except Exception:
+        pass
+    tmp.unlink(missing_ok=True)
+    return wav
+
+
 def synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=None) -> Path | None:
-    """Speak `text` into `out` (WAV). Returns None when TTS is off or no engine is installed."""
+    """Speak `text` into `out` (WAV, leading/trailing silence trimmed). None when TTS is off or no engine works."""
+    wav = _synth(text, out, settings, voice_pref, log)
+    return trim_silence(wav) if wav else None
+
+
+def _synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=None) -> Path | None:
     v = settings.get("voice", {})
     engine = v.get("tts", "auto")
     if engine == "none" or not text.strip():
@@ -170,7 +192,7 @@ def synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=No
 
 
 async def fit_to_clip(video: Path, speech: Path | None, out: Path, duration: float, max_speedup: float = 1.3,
-                      lead: float = 0.4) -> dict:
+                      lead: float = VO_LEAD) -> dict:
     """Mux speech under `video`, exactly `duration` long. Speech that overruns is sped up (up to
     max_speedup) and then cut; the clip always gets a 48 kHz stereo track so stitch sees real audio."""
     if speech is None:
@@ -184,4 +206,6 @@ async def fit_to_clip(video: Path, speech: Path | None, out: Path, duration: flo
          f"adelay={int(lead * 1000)}|{int(lead * 1000)},aresample=48000,aformat=channel_layouts=stereo,apad"
     await arun_ffmpeg(["-i", str(video), "-i", str(speech), "-filter_complex", f"[1:a]{af}[a]", "-map", "0:v", "-map", "[a]",
                        "-t", f"{duration:.3f}", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(out)])
-    return {"speech_seconds": round(said, 2), "tempo": round(tempo, 3), "cut": said / tempo > room + 0.05}
+    # where the voice really is inside the clip: captions are timed from this when faster-whisper is not installed
+    window = [round(lead, 3), round(min(duration, lead + said / tempo), 3)]
+    return {"speech_seconds": round(said, 2), "tempo": round(tempo, 3), "cut": said / tempo > room + 0.05, "speech_window": window}

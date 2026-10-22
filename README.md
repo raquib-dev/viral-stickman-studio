@@ -226,8 +226,17 @@ the colour shifts at that moment. Settings → Render → Colours can turn this 
 heart, warning, scroll, crown, spear) placed beside the character or held in their hand; a gesture
 (point, present, think, facepalm, shrug, cheer, arms crossed, hands on hips, hold, explain); a hat from
 roles (king → crown, soldier → helmet); a walk-in on the first clip; a second character for "they / vs /
-boss" lines; two camera shots; fades on the first and last clip; and a stat badge only for numbers the
+boss" lines; two camera shots; a fade in at the start of the video and out at its end (clips cut straight
+into each other, so the story never dips to black between them); and a stat badge only for numbers the
 voiceover says.
+
+**Exposure and quality checks.** Only light sources glow (bloom starts above normal brightness, so skin and
+paper cards never haze over), the character's colour is kept below paper white, and each frame measures its own
+highlights and lowers exposure only when they would clip (bright close-ups, white cards); dark scenes are left
+alone. Every clip's log ends with a frame report (`QA ... frames, mean brightness ...`) and warns about
+near-black frames that no fade explains or frames that are mostly pure white. Stitch writes
+`final/qa.json`: frame count, audio vs video length, unexpected black dips (with the clip seam they sit on),
+caption overlaps; problems also show as `QA:` warnings in the job log.
 
 Each clip's scene comes from `projects/<slug>/scenes/clip-NN.json` if that file exists (the plan the app
 made is saved next to the clip as `clips/clip-NN.scene.json`: copy it there and edit), otherwise from the
@@ -256,17 +265,18 @@ walking in, a second character, props and where they go, badges, note/code panel
 fades); a JSON tab; **Check** (shows what would be repaired), **Preview frame** at any moment (a real render,
 seconds on your GPU), **Save** and **Save & re-render clip**. Saved edits are yours: the AI planner keeps them.
 
-### Animation pack (optional, more human movement)
+### Animation pack (included: more human movement)
 
-The base rig's moves come from a robot character. A free CC0 humanoid animation pack makes walking, running,
-idling, sitting and jumping more human:
+The base rig's moves come from a robot character. The repo now ships a CC0 humanoid animation pack,
+`renderer/public/models/anim-pack.glb` (Kay Lousberg's **KayKit Adventurers**, 75 animations, from the official
+KayKit repository on GitHub): walking with an arm swing, running, a relaxed idle, sitting, a natural jump, cheer
+and more. Its meshes are hidden; only its bone directions drive the stick figure.
 
-1. Download Quaternius's **Universal Animation Library** (CC0; the free Standard tier has 45 animations) from
-   https://quaternius.itch.io/universal-animation-library.
-2. Take its glTF/GLB file (or open the FBX in Blender, *File → Export → glTF 2.0*, format **glTF Binary**).
-3. Save it as `renderer/public/models/anim-pack.glb`, then `cd renderer; npm run build`.
-4. Settings → Local services shows **Animation pack: installed**; the render log names the moves it maps
-   (e.g. Walking → Walk_Loop). Settings → Render → Animation pack can turn it off.
+Nothing to do beyond rebuilding the renderer after `git pull` (`cd renderer; npm run build`). Settings → Local
+services shows **Animation pack: installed**, and each clip's render log names the moves it maps (Idle → Idle,
+Walking → Walking_A, Running → Running_A, Sitting → Sit_Chair_Idle). Settings → Render → Animation pack →
+**off** goes back to the robot moves. To use another pack (e.g. Quaternius's Universal Animation Library,
+https://quaternius.itch.io/universal-animation-library), save its GLB over `anim-pack.glb` and rebuild.
 
 Any humanoid rig works (Quaternius/Unreal, Mixamo or Blender bone names): its bones are matched by name, it is
 turned to face the camera, and only its bone directions drive the stick figure. Other pack clips can be used in
@@ -379,6 +389,25 @@ video elements and posters, not playback. Chrome, Edge and Firefox play the clip
 
 ---
 
+### After updating: what you need to do
+
+After `git pull` on this version (video quality fixes + bundled animation pack):
+
+```powershell
+cd renderer; npm run build; cd ..      # renderer: exposure, framing, QA report, animation pack
+cd frontend; npm run build; cd ..      # UI: Fill in box for script gaps
+```
+
+Then restart the app and, for a project you already rendered:
+
+1. Studio → Script: if a **Fill in before rendering** box shows (e.g. `{{your number}}`), type your real value
+   and press **Fill in**.
+2. Render → **Re-plan** the clips (optional: plans saved before this version are repaired at render time
+   anyway: no fades between clips, no placeholder badges) and **Regenerate** every clip, then run **Stitch**.
+3. Read the `QA` lines in the Activity log or `final/qa.json`.
+
+Optional: `pip install faster-whisper` for word-accurate caption timing.
+
 ## 7. Known limits (read this)
 
 - **`hookscore.py` is a heuristic, not a predictor.** By its authors' own measurement it separates
@@ -399,7 +428,11 @@ video elements and posters, not playback. Chrome, Edge and Firefox play the clip
   voice block verbatim is the director skill's tested method, not a guarantee. Watch and listen to
   real clips; the app checks prompt compliance, not what the model actually rendered.
 - **Caption timing** on real renders is word-accurate only with `faster-whisper` installed. Otherwise
-  each clip's known narration is spread across its 10 s window.
+  each clip's narration is spread across the stretch where its voice actually plays (local backends record
+  it), or across the 10 s window for Omni clips.
+- **Script gaps.** When the script needs a figure only you know it writes `{{your number}}`. Studio → Script
+  shows a **Fill in before rendering** box; a real render stops until every gap is filled (the voice would
+  read it out otherwise), and the app never invents the number.
 - **Rates change.** Omni pricing and limits were checked on 21 Oct 2026 (the preview model ID
   `gemini-omni-flash-preview` shut down on 22 Oct 2026; the app uses `gemini-omni-1.1-flash`).
 - **Platform policy.** Stick-figure explainers made in a pipeline must show your own insight, and

@@ -70,6 +70,32 @@ async def hooks(ctx) -> dict:
     return {"outputs": ["script/hooks.json"]}
 
 
+PLACEHOLDER = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+
+
+def placeholders(clips: list[dict]) -> list[dict]:
+    """The {{...}} gaps the script left for you (a number only you know). They must be filled before a real
+    render, or the voice would read them out and the scene would show them."""
+    found: dict[str, list[int]] = {}
+    for c in clips:
+        for m in PLACEHOLDER.finditer(c.get("vo", "")):
+            found.setdefault(m.group(1), []).append(c["index"] + 1)
+    return [{"name": k, "clips": sorted(set(v))} for k, v in found.items()]
+
+
+def fill_placeholders(script: dict, values: dict[str, str]) -> dict:
+    """Put your values in place of the named {{...}} gaps (in the narration and the hook lines)."""
+    def sub(text: str) -> str:
+        return PLACEHOLDER.sub(lambda m: str(values[m.group(1)]).strip() if str(values.get(m.group(1), "")).strip() else m.group(0), text)
+    for c in script["clips"]:
+        c["vo"] = sub(c["vo"])
+    for k in ("say", "write"):
+        if isinstance(script.get("hook", {}).get(k), str):
+            script["hook"][k] = sub(script["hook"][k])
+    script["placeholders"] = placeholders(script["clips"])
+    return script
+
+
 def _script_flags(clips: list[dict], beats_report: dict, hook_say: str, duration: int) -> list[str]:
     flags = []
     for r in beats_report["beats"]:
@@ -147,7 +173,10 @@ async def script(ctx) -> dict:
     final_report = await th(tools.beats, "\n".join(final_lines), wpm, duration)
     final_flags = _script_flags(clips, final_report, hook["say"], duration)
     data = {**res, "clips": clips, "hook": hook, "topic": topic, "duration": duration, "format": fmt, "wpm": wpm,
-            "flags": final_flags, "plan": plan}
+            "flags": final_flags, "plan": plan, "placeholders": placeholders(clips)}
+    for ph in data["placeholders"]:
+        ctx.log(f"fill in {{{{{ph['name']}}}}} (clip {', '.join(map(str, ph['clips']))}) in Studio → Script before rendering: "
+                "the app never invents a number", "warn")
     ctx.write_json("script/script.json", data)
     ctx.write_json("script/beats.json", final_report)
     ctx.write_json("script/human.json", {"humanize_report": hum["report"], "detect_before": before, "detect_after": after})

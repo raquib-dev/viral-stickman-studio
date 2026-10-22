@@ -298,7 +298,7 @@ class ThreeJSBackend:
         # 1. voice first, so the mouth can follow the real speech
         wav = out.with_suffix(".vo.wav")
         speech = await asyncio.to_thread(tts.synth, clip.vo, wav, self.settings, clip.voice_pref, log)
-        lead, tail = 0.4, 0.3
+        lead, tail = tts.VO_LEAD, 0.3
         if speech:
             said = probe(speech)["duration"]
             tempo = min(float(self.settings["voice"].get("max_speedup", 1.3)), max(1.0, said / max(1.0, clip.duration - lead - tail)))
@@ -315,6 +315,18 @@ class ThreeJSBackend:
             scene = auto_scene(clip, self.cfg, talk)
         w, h = dims(clip.ratio, clip.resolution)
         scene.update({"width": w, "height": h, "fps": fps, "duration": clip.duration})
+        # seams between clips are the app's: fade in only at the start of the video and out only at its end, so the
+        # story never dips to black mid-video. A plan you edited in the scene editor keeps its own transitions.
+        if scene.get("_planned_by") != "editor":
+            for key in ("badges", "panels"):
+                keep = [el for el in scene.get(key) or [] if not PLACEHOLDER.search(json.dumps(el))]
+                if len(keep) != len(scene.get(key) or []):
+                    log(f"clip {clip.index + 1}: removed a {key[:-1]} showing a template placeholder", "warn")
+                    scene[key] = keep
+            want = seam_transition(clip.index, clip.count, scene.get("transition"))
+            if want != scene.get("transition"):
+                log(f"clip {clip.index + 1}: transition {scene.get('transition')} -> {want} (no fade to black between clips)")
+                scene["transition"] = want
         if self.cfg.get("animation_pack", "auto") == "off":
             scene["pack"] = False
         errs = validate_scene(scene)
@@ -338,7 +350,7 @@ class ThreeJSBackend:
             + (" · lip sync from the voice" if a.get("mouth") else ""))
         # 3. render frames in the headless browser
         silent = out.with_suffix(".silent.mp4")
-        await self._render(scene_path, silent, clip, log)
+        qa = await self._render(scene_path, silent, clip, log)
         # 4. mux the voice under it
         fit = await tts.fit_to_clip(silent, speech, out, clip.duration, float(self.settings["voice"].get("max_speedup", 1.3)), lead)
         for f in (silent, wav):
@@ -347,9 +359,9 @@ class ThreeJSBackend:
         return ClipResult(clip.index, out, clip.duration, 0.0, self.name, last_frame=lf,
                           meta={"scene": scene_path.name, "voice": bool(speech),
                                 "planned_by": scene.get("_planned_by", "your file") if override.exists() else "keywords",
-                                **fit})
+                                "qa": qa, **fit})
 
-    async def _render(self, scene_path: Path, out: Path, clip: ClipSpec, log: Log) -> None:
+    async def _render(self, scene_path: Path, out: Path, clip: ClipSpec, log: Log) -> dict:
         env = {**__import__("os").environ, "FFMPEG_PATH": ffmpeg_bin()}
         if self.cfg.get("browser_path"):
             env["VSS_BROWSER_PATH"] = self.cfg["browser_path"]
@@ -358,7 +370,7 @@ class ThreeJSBackend:
         proc = await asyncio.create_subprocess_exec(
             shutil.which("node") or "node", str(RENDERER / "render.mjs"), "--scene", str(scene_path), "--out", str(out),
             cwd=str(RENDERER), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        t0, last_note, error = time.time(), 0.0, None
+        t0, last_note, error, qa = time.time(), 0.0, None, {}
         assert proc.stdout is not None
         async for raw in proc.stdout:
             try:
@@ -379,6 +391,8 @@ class ThreeJSBackend:
                 f, n = ev["frame"], ev["frames"]
                 eta = (time.time() - t0) / max(1, f) * (n - f)
                 log(f"clip {clip.index + 1}: frame {f}/{n} ({f / n:.0%}), ~{eta:.0f}s left")
+            elif ev.get("event") == "qa":
+                qa = {k: v for k, v in ev.items() if k != "event"}
             elif ev.get("event") in ("error", "page-error"):
                 error = ev.get("message")
         err = (await proc.stderr.read()).decode(errors="replace") if proc.stderr else ""
@@ -387,12 +401,40 @@ class ThreeJSBackend:
             raise RenderError(f"three.js renderer failed: {(error or err.strip()[-400:] or f'exit {proc.returncode}')[:500]}",
                               retryable=False)
         log(f"clip {clip.index + 1}: rendered in {time.time() - t0:.0f}s")
+        for line, level in qa_lines(qa, clip.index + 1):
+            log(line, level)
+        return qa
+
+
+def seam_transition(index: int, count: int, current: dict | None = None) -> dict:
+    """Fade in at the very start, out at the very end, hard cuts between clips (the voice carries straight on)."""
+    cur = current or {}
+    return {**cur, "in": cur.get("in", "fade") if index == 0 else "none",
+            "out": cur.get("out", "fade") if index == count - 1 else "none"}
+
+
+def qa_lines(qa: dict, n: int) -> list[tuple[str, str]]:
+    """The renderer's frame report as log lines: problems as warnings, the summary as info."""
+    if not qa:
+        return []
+    out = []
+    if qa.get("frames") != qa.get("expected"):
+        out.append((f"clip {n}: QA rendered {qa.get('frames')} of {qa.get('expected')} frames", "warn"))
+    for a, b in qa.get("black", []):
+        out.append((f"clip {n}: QA near-black frames {a:.2f}-{b:.2f}s with no fade planned there (an empty view?)", "warn"))
+    for a, b in qa.get("blown", []):
+        out.append((f"clip {n}: QA over a quarter of the frame is pure white {a:.2f}-{b:.2f}s", "warn"))
+    g = qa.get("guarded_frames", 0)
+    out.append((f"clip {n}: QA {qa.get('frames')} frames, mean brightness {qa.get('mean_luma')}/255"
+                + (f", highlight guard lowered exposure on {g} frame(s) (to x{qa.get('min_exposure_scale')})" if g else ""), "info"))
+    return out
 
 
 # ---- checking and repairing a scene plan written by an AI -----------------------------------------
 
 LIMITS = {"actors": 2, "props": 3, "panels": 2, "badges": 2}
 DIGITS = re.compile(r"\d[\d,.]*")
+PLACEHOLDER = re.compile(r"\{\{[^{}]*\}\}|\(\([^()]*\)\)|\[\[[^\[\]]*\]\]")
 
 
 def _nums(text: str) -> set[str]:
@@ -465,9 +507,14 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
         fixes.append("added the hero"); actors = [{"id": "hero"}]
     actors[0].setdefault("id", "hero")
     prop_ids = []
+    assets0 = s.get("assets") or {}
     for i, p in enumerate(s.get("props") or []):
         p.setdefault("id", f"p{i + 1}")
-        prop_ids.append(p["id"])
+        t = str(p.get("type", ""))
+        # only props that survive the checks below can be pointed at or looked at
+        if t in C["props"] or (t == "new" and p.get("asset")) or (t.startswith("custom:") and (
+                t[7:] in assets0 or t[7:] in (known_assets or ()))):
+            prop_ids.append(p["id"])
     ids = {a.get("id") for a in actors} | set(prop_ids) | {"camera"}
     for a in actors:
         for k in a.get("anim", []):
@@ -515,7 +562,8 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
         if t not in C["props"] and not pending and not custom:
             fixes.append(f"dropped prop {p.get('type')!r}"); continue
         if p.get("pos") is not None:
-            p["pos"] = clampv(p["pos"], [-xr, 0, -2.5], [xr, 2.4, 1.2])
+            # not closer to the camera than the actor's front (a prop at z 1.2 sat inside close-up shots)
+            p["pos"] = clampv(p["pos"], [-xr, 0, -2.5], [xr, 2.4, 0.6])
         if p.get("hold") and not isinstance(p["hold"], dict):      # "hero", "R" or true -> held by that actor
             h = p["hold"]
             p["hold"] = {"hand": h} if h in ("L", "R") else {"actor": h} if isinstance(h, str) else {}
@@ -533,6 +581,8 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
                 el["pos"] = clampv(el["pos"], [-xr, 0.3, -3], [xr, 2.8, 0.5])
             code = key == "panels" and (el.get("kind") == "code" or re.search(r"\.\w+$", el.get("title", "")))
             texts = [el.get("text", ""), el.get("title", "")] + ([] if code else el.get("lines", []))
+            if any(PLACEHOLDER.search(str(x)) for x in texts):
+                fixes.append(f"removed a {key[:-1]} showing a template placeholder (fill it in the script first)"); continue
             bad = sorted(set().union(*(_nums(x) for x in texts)) - said)
             if bad:
                 fixes.append(f"removed a {key[:-1]} showing {', '.join(bad)} (not said in the voiceover)"); continue
@@ -547,6 +597,9 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
             k["shot"] = {**(shot if isinstance(shot, dict) else {}), "type": "medium"}
         if not shot and not (k.get("pos") and k.get("look")):
             k["shot"] = "medium"
+        if isinstance(k.get("shot"), dict) and isinstance(k["shot"].get("zoom"), (int, float)) and not 0.75 <= k["shot"]["zoom"] <= 1.6:
+            fixes.append(f"camera zoom {k['shot']['zoom']} -> {min(1.6, max(0.75, k['shot']['zoom']))}")
+            k["shot"]["zoom"] = min(1.6, max(0.75, k["shot"]["zoom"]))
         k["t"] = T(k.get("t")); cams.append(k)
     if not cams:
         fixes.append("added a medium shot"); cams = [{"t": 0, "shot": {"type": "medium", "target": actors[0]["id"]}}]
@@ -556,6 +609,16 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
         if tr.get(side, "none") not in C["transitions"]:
             fixes.append(f"transition {tr[side]!r} -> none"); tr[side] = "none"
     s["transition"] = tr
+    # the look is the style's: exposure/bloom/shake from a plan are kept inside safe ranges (they blew frames out)
+    for key, lo, hi in (("exposure", 0.8, 1.15), ("handheld", 0.0, 0.025)):
+        if key in s and not (isinstance(s[key], (int, float)) and lo <= s[key] <= hi):
+            fixes.append(f"{key} {s[key]!r} -> {'default' if not isinstance(s[key], (int, float)) else min(hi, max(lo, s[key]))}")
+            if isinstance(s[key], (int, float)):
+                s[key] = min(hi, max(lo, s[key]))
+            else:
+                s.pop(key)
+    if "bloom" in s:
+        fixes.append("bloom settings removed (the style decides the glow)"); s.pop("bloom")
     # pending AI-drawn props and library props are resolved by the caller; validate the rest
     probe = {**s, "props": [p for p in s["props"] if p.get("type") != "new" and not (
         str(p.get("type", "")).startswith("custom:") and p["type"][7:] not in (s.get("assets") or {}))]}

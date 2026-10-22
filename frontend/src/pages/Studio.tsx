@@ -65,8 +65,28 @@ function Hooks() {
   );
 }
 
+function FillGaps({ gaps, onDone }: { gaps: { name: string; clips: number[] }[]; onDone: () => void }) {
+  const { slug } = useProject();
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [err, setErr] = useState<string | null>(null);
+  const save = async () => {
+    setErr(null);
+    try { await api.post(`/projects/${slug}/script/fill`, { values: vals }); setVals({}); onDone(); } catch (e: any) { setErr(e.message); }
+  };
+  return (
+    <div className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--serious)" }} data-testid="script-gaps">
+      <b>Fill in before rendering</b>: the script left these for you (the app never invents a number). Until they are filled a
+      real render stops here, because the voice would read them out.
+      <div className="mt-2 grid gap-2 md:grid-cols-2">{gaps.map((g) => (
+        <label key={g.name} className="text-sm">{`{{${g.name}}}`} <span className="text-ink-3">(clip {g.clips.join(", ")})</span>
+          <input className="input" value={vals[g.name] ?? ""} placeholder="your real value" onChange={(e) => setVals({ ...vals, [g.name]: e.target.value })} /></label>))}</div>
+      <button className="btn-primary mt-2" onClick={save} disabled={!Object.values(vals).some((v) => v.trim())} data-testid="fill-gaps">Fill in</button>
+      {err && <span className="ml-2 text-xs">{err}</span>}
+    </div>);
+}
+
 function Script() {
-  const [s] = useProjectFile<any>("script/script.json");
+  const [s, , reloadScript] = useProjectFile<any>("script/script.json");
   const [beats] = useProjectFile<any>("script/beats.json");
   const [human] = useProjectFile<any>("script/human.json");
   return (
@@ -82,6 +102,7 @@ function Script() {
             ? <Note>✓ beats.py and the app's checks raise no flags (hook within 3 s, no beat over 4 s, concrete every 3 beats, loop, length on target, one ask, ≤25 words per clip).</Note>
             : <div className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--serious)" }} data-testid="script-flags">
               <b>Flags to fix</b> (re-run Script, or edit the hook choice):<ul className="mt-1 list-disc pl-5">{s.flags.map((f: string) => <li key={f}>{f}</li>)}</ul></div>}
+          {s.placeholders?.length > 0 && <FillGaps gaps={s.placeholders} onDone={reloadScript} />}
           <div className="grid gap-2">
             {s.clips.map((c: any) => (
               <div key={c.index} className="card-2">

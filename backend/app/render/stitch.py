@@ -89,3 +89,78 @@ def loudnorm(video: Path, out: Path, target_i: float = -16.0, target_tp: float =
     after = measure_loudness(out, target_i, target_tp)
     return {"target_i": target_i, "target_tp": target_tp, "before_i": float(first["input_i"]),
             "after_i": float(after["input_i"]), "after_tp": float(after["input_tp"])}
+
+
+# ---- final-video quality report ---------------------------------------------------------------------
+
+def _streams(video: Path) -> dict:
+    import subprocess
+
+    from ..settings import ffprobe_bin
+    p = subprocess.run([ffprobe_bin(), "-v", "error", "-count_packets", "-print_format", "json", "-show_streams", str(video)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    d = json.loads(p.stdout or "{}")
+    out = {}
+    for s in d.get("streams", []):
+        out[s["codec_type"]] = {"duration": float(s.get("duration") or 0), "packets": int(s.get("nb_read_packets") or 0),
+                                "rate": s.get("r_frame_rate"), "sample_rate": s.get("sample_rate")}
+    return out
+
+
+def frame_luma(video: Path) -> list[float]:
+    """Mean luma (0-255) of every frame."""
+    err = run_ffmpeg(["-i", str(video), "-an", "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"],
+                     timeout=LONG)
+    return [float(x) for x in re.findall(r"lavfi\.signalstats\.YAVG=([\d.]+)", err)]
+
+
+def black_runs(luma: list[float], fps: float, intentional: list[tuple[float, float]], dark: float = 22.0,
+               drop: float = 0.45, min_frames: int = 2) -> list[dict]:
+    """Unexpected dark dips: frames under `dark` AND under `drop` x the median of the 2 s around them, outside the
+    intentional windows (the opening fade-in, the closing fade-out). A scene that is dark all along is not a
+    dip, so legitimately dark scenes are not flagged."""
+    out, run = [], []
+    half = int(fps)
+    for i, y in enumerate(luma):
+        t = i / fps
+        around = sorted(luma[max(0, i - half):i + half + 1])
+        med = around[len(around) // 2]
+        bad = y < dark and y < drop * med and not any(a <= t <= b for a, b in intentional)
+        if bad:
+            run.append(i)
+            continue
+        if len(run) >= min_frames:
+            out.append({"start": round(run[0] / fps, 2), "end": round((run[-1] + 1) / fps, 2), "min_luma": round(min(luma[k] for k in run), 1)})
+        run = []
+    if len(run) >= min_frames:
+        out.append({"start": round(run[0] / fps, 2), "end": round((run[-1] + 1) / fps, 2), "min_luma": round(min(luma[k] for k in run), 1)})
+    return out
+
+
+def final_qa(video: Path, fps: float, clip_starts: list[float], caption_events: list[tuple[float, float, int, int]],
+             fade: float = 0.6) -> dict:
+    """Checks on the exported file: frame count vs duration, audio vs video length, unexpected black dips,
+    caption gaps/overlaps. Returns the report with a list of human-readable problems."""
+    st = _streams(video)
+    v, a = st.get("video", {}), st.get("audio", {})
+    problems = []
+    expected = round(v.get("duration", 0) * fps)
+    if v.get("packets") and abs(v["packets"] - expected) > 1:
+        problems.append(f"{v['packets']} video frames for {v['duration']:.2f}s at {fps:g} fps (expected {expected})")
+    if a and abs(a.get("duration", 0) - v.get("duration", 0)) > 0.15:
+        problems.append(f"audio is {a['duration']:.2f}s but video is {v['duration']:.2f}s")
+    if not a:
+        problems.append("no audio stream")
+    luma = frame_luma(video)
+    end = len(luma) / fps if luma else v.get("duration", 0)
+    dips = black_runs(luma, fps, [(0, fade), (end - fade, end + 1)])
+    for d in dips:
+        near = min(clip_starts, key=lambda s: abs(s - d["start"])) if clip_starts else None
+        where = f" (at the clip seam {near:.1f}s)" if near is not None and abs(near - d["start"]) < 1.0 and near > 0 else ""
+        problems.append(f"near-black frames {d['start']:.2f}-{d['end']:.2f}s{where}")
+    overlaps = [(a1, b1) for (a0, b0, _, _), (a1, b1, _, _) in zip(caption_events, caption_events[1:]) if a1 < b0 - 1e-3]
+    if overlaps:
+        problems.append(f"{len(overlaps)} caption overlap(s), first at {overlaps[0][0]:.2f}s")
+    return {"frames": v.get("packets"), "fps": fps, "video_seconds": v.get("duration"), "audio_seconds": a.get("duration"),
+            "mean_luma": round(sum(luma) / len(luma), 1) if luma else None, "black_dips": dips,
+            "caption_events": len(caption_events), "caption_overlaps": len(overlaps), "problems": problems}

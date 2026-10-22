@@ -408,6 +408,21 @@ def check_scene(slug: str, n: int, body: SceneIn) -> dict:
     return {"scene": scene, "fixes": fixes, "errors": errors}
 
 
+@app.post("/api/projects/{slug}/script/fill")
+def fill_script(slug: str, body: dict) -> dict:
+    """Fill the script's {{...}} gaps with your own values (numbers only you know)."""
+    from .stages.studio import fill_placeholders
+    f = paths.project_dir(slug) / "script" / "script.json"
+    if not f.exists():
+        raise HTTPException(404, "no script yet")
+    values = {str(k): str(v) for k, v in (body.get("values") or {}).items() if str(v).strip()}
+    if not values:
+        raise HTTPException(400, "nothing to fill")
+    script = fill_placeholders(json.loads(f.read_text(encoding="utf-8")), values)
+    f.write_text(json.dumps(script, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return {"placeholders": script["placeholders"], "clips": script["clips"]}
+
+
 @app.put("/api/projects/{slug}/scenes/{n}")
 def save_scene(slug: str, n: int, body: SceneIn) -> dict:
     res = check_scene(slug, n, body)

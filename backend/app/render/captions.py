@@ -6,6 +6,7 @@ approximate words). The method used is recorded in final/words.json.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ..analysis.transcript import Word
@@ -15,17 +16,24 @@ VO_LEAD = 0.4   # seconds before the narrator starts inside a clip (kino's voSta
 VO_TAIL = 0.6
 
 
-def estimate_words(clip_vos: list[str], clip_seconds: float = 10.0, durations: list[float] | None = None) -> list[Word]:
-    """durations: each clip's real length (generated clips are not always exactly clip_seconds)."""
+def estimate_words(clip_vos: list[str], clip_seconds: float = 10.0, durations: list[float] | None = None,
+                   windows: list[list[float] | None] | None = None) -> list[Word]:
+    """durations: each clip's real length (generated clips are not always exactly clip_seconds).
+    windows: where the voice really is inside each clip ([start, end] seconds, from the local TTS), so the
+    estimate follows the audio instead of spreading words over the whole clip."""
     words: list[Word] = []
     offset = 0.0
     for i, vo in enumerate(clip_vos):
         length = durations[i] if durations and i < len(durations) and durations[i] > 0 else clip_seconds
         clip_start, offset = offset, offset + length
-        toks = vo.split()
+        toks = clean_text(vo).split()
         if not toks:
             continue
-        start, end = clip_start + VO_LEAD, clip_start + length - VO_TAIL
+        win = windows[i] if windows and i < len(windows) else None
+        if win and win[1] - win[0] > 0.3:
+            start, end = clip_start + win[0], clip_start + min(length, win[1])
+        else:
+            start, end = clip_start + VO_LEAD, clip_start + length - VO_TAIL
         weights = [len(t) + 2 + (3 if t[-1:] in ",.;:!?" else 0) for t in toks]
         total = sum(weights)
         t = start
@@ -68,6 +76,16 @@ def whisper_words(audio_or_video: Path, log=None, model_name: str = "base.en", d
     return out or None
 
 
+def dedupe_words(words: list[Word]) -> list[Word]:
+    """Drop a word repeated back-to-back with overlapping times (a transcription echo), keep real repeats."""
+    out: list[Word] = []
+    for w in words:
+        if out and w.w.lower().strip(".,!?") == out[-1].w.lower().strip(".,!?") and w.s < out[-1].e:
+            continue
+        out.append(w)
+    return out
+
+
 def _ass_time(t: float) -> str:
     cs = int(round(max(0.0, t) * 100))
     h, cs = divmod(cs, 360000)
@@ -76,7 +94,45 @@ def _ass_time(t: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+PLACEHOLDER = re.compile(r"\{\{\s*([^{}]*?)\s*\}\}|\(\(\s*([^()]*?)\s*\)\)")
+
+
+def clean_text(text: str) -> str:
+    """A template placeholder that reached the narration ("{{your number}}") is shown as its words, never braces."""
+    return PLACEHOLDER.sub(lambda m: m.group(1) or m.group(2) or "", text or "")
+
+
+def phrase_pages(words: list[Word], max_words: int = 3, gap: float = 0.55) -> list[list[Word]]:
+    """Group words into caption pages: at most max_words, and a page ends at sentence punctuation or a pause, so
+    a page never straddles two sentences or a breath."""
+    pages, cur = [], []
+    for w in words:
+        if cur and (len(cur) >= max_words or w.s - cur[-1].e > gap or cur[-1].w[-1:] in ".!?"):
+            pages.append(cur); cur = []
+        cur.append(w)
+    if cur:
+        pages.append(cur)
+    return pages
+
+
+def page_events(pages: list[list[Word]], hold: float = 0.15) -> list[tuple[float, float, int, int]]:
+    """(start, end, page, word) for every highlighted word. No two events overlap: a page's last word holds at most
+    `hold` seconds and never past the next page's first word (overlaps made ASS stack two lines)."""
+    out = []
+    for p, page in enumerate(pages):
+        nxt = pages[p + 1][0].s if p + 1 < len(pages) else float("inf")
+        for j, w in enumerate(page):
+            start = max(w.s, out[-1][1] if out else 0.0)
+            end = page[j + 1].s if j + 1 < len(page) else min(w.e + hold, nxt)
+            end = max(end, start + 0.04)
+            if out and start < out[-1][1]:
+                start = out[-1][1]
+            out.append((round(start, 3), round(end, 3), p, j))
+    return out
+
+
 def _esc(text: str) -> str:
+    text = clean_text(text)
     return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")
 
 
@@ -102,7 +158,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial,{cap_size},&H00FFFFFF,&H0000D7FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,{max(2, cap_size // 14)},0,2,{ml},{mr},{cap_bottom_margin},1
+Style: Cap,Arial,{cap_size},&H00FFFFFF,&H0000D7FF,&H00000000,&H90000000,1,0,0,0,100,100,0,0,1,{max(3, cap_size // 11)},{max(1, cap_size // 24)},2,{ml},{mr},{cap_bottom_margin},1
 Style: Hook,Arial,{hook_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,1,0,0,0,100,100,0,0,3,{max(4, hook_size // 6)},0,8,{ml},{mr},{hook_top},1
 Style: Callout,Arial,{call_size},&H0000D7FF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,3,{max(3, call_size // 6)},0,8,{ml},{mr},{int(frame_h * 0.30)},1
 
@@ -119,13 +175,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         events.append(f"Dialogue: 1,{_ass_time(t0)},{_ass_time(t1)},Callout,,0,0,0,,{_esc(c['text'])}")
         boxes.append(text_box(f"callout @{t0:.1f}s", c["text"], ratio, 0.30, call_size, frame_w, frame_h))
     if captions and words:
-        pages = [words[i:i + words_per_page] for i in range(0, len(words), words_per_page)]
-        for page in pages:
-            for j, w in enumerate(page):
-                start = w.s
-                end = page[j + 1].s if j + 1 < len(page) else w.e + 0.15
-                parts = [("{\\c&H0000D7FF&}" + _esc(x.w) + "{\\c&H00FFFFFF&}") if x is w else _esc(x.w) for x in page]
-                events.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Cap,,0,0,0,,{' '.join(parts)}")
+        words = dedupe_words(words)
+        pages = phrase_pages(words, words_per_page)
+        for start, end, p, j in page_events(pages):
+            page = pages[p]
+            parts = [("{\\c&H0000D7FF&}" + _esc(x.w) + "{\\c&H00FFFFFF&}") if k == j else _esc(x.w) for k, x in enumerate(page)]
+            events.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Cap,,0,0,0,,{' '.join(parts)}")
         longest = max((" ".join(x.w for x in p) for p in pages), key=len)
         # captions are bottom-aligned (ASS alignment 2): the block grows upward from the margin
         box = text_box("captions", longest, ratio, 0.0, cap_size, frame_w, frame_h)

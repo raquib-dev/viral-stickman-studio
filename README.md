@@ -348,6 +348,13 @@ stitch). Differences from the narrated format:
   - loudness at **-15 LUFS** (like the references);
   - `final/qa.json`.
 
+**Punch-up pass** (Settings → Dialogue shorts → *Punch-up pass on scripts*, on by default): after a script passes
+its checks, one more writing pass with the `joke-engineering` skill diagnoses each punchline (too obvious, too
+obscure, too thin, over-explained, forced, bloated) and rewrites only the weak ones. It keeps every line's
+speaker, timing, pose and board items, and never touches the hook. A rewrite that breaks a rule (too long, a new
+checker flag) is thrown away and the script stays as written. Studio shows what changed and why. Turn it off to save
+one model call per script (useful on Groq's free plan).
+
 **The writing rules** (`backend/app/dialogue.py`, also given to the writing model):
 - lines of 2-6 words (max 9; a whiteboard explanation line max 16), with at least 2 one- or two-word punches;
 - nobody speaks more than 3 lines in a row. With two characters each has at least 30% of the lines; in a group

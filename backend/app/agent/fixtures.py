@@ -234,6 +234,17 @@ def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: s
             "turn": max(2, round(len(lines) * 0.75)), "button": len(lines), "claims_to_source": []}
 
 
+def punch_up(lines: list, cast: dict, topic: dict, hook_say: str) -> dict:
+    """Dry run: one visible fix (an over-explained line cut down), everything else unchanged."""
+    out, notes = [ln["text"] for ln in lines], []
+    for k, t in enumerate(out):
+        if k and t == "You said it very clearly.":
+            out[k] = "[flatly] Very clearly."
+            notes.append({"line": k + 1, "state": "H6", "change": "cut the setup words; the two that land stay"})
+            break
+    return {**FIX, "lines": out, "notes": notes}
+
+
 def script(topic: dict, hook: dict, duration: int, platform: str, plan: list, profile_summary: list, niche: str,
            revise: Any = None) -> dict:
     n = duration // 10

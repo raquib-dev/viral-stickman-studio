@@ -194,6 +194,43 @@ def _script_flags(clips: list[dict], beats_report: dict, hook_say: str, duration
     return flags
 
 
+async def _punch_up(ctx, res: dict, cast: dict, topic: dict, hook: dict, duration: int, wpm: float) -> tuple[dict, dict]:
+    """The joke-engineering punch-up pass (Settings → Dialogue shorts → Punch-up pass): rewrite only the weak jokes.
+    Kept only when it holds the format: same lines and speakers, the hook untouched, no line over its word cap, and
+    no new flag from the checker. A failed pass leaves the script as it was."""
+    lines = res["lines"]
+    report = {"applied": False, "notes": [], "before": {}}
+    try:
+        out = await ctx.agent.run(tasks.punch_up(lines, cast, topic, hook["say"]), ctx)
+    except Exception as e:                                # the pass is optional: never lose a script over it
+        ctx.log(f"punch-up pass skipped ({type(e).__name__}: {str(e)[:200]})", "warn")
+        report["skipped"] = str(e)[:200]
+        return res, report
+    texts = [str(t).strip() for t in (out.get("lines") or [])]
+    if len(texts) != len(lines):
+        ctx.log(f"punch-up pass returned {len(texts)} lines for {len(lines)}; kept the script as written", "warn")
+        return res, report
+    new = []
+    for k, (ln, t) in enumerate(zip(lines, texts)):
+        cap = dlg.MAX_BOARD_LINE_WORDS if ln.get("board") else dlg.MAX_LINE_WORDS
+        ok = t and (k or dlg.squash(t) == dlg.squash(hook["say"])) and dlg.words(t) <= cap and len(dlg.tags(t)) <= 2 and "{{" not in t
+        if ok and t != ln["text"]:
+            report["before"][k] = ln["text"]
+        new.append({**ln, "text": t if ok else ln["text"]})
+    before_flags = dlg.dialogue_flags(res, cast, hook["say"], duration, wpm)
+    after = {**res, "lines": new}
+    after_flags = dlg.dialogue_flags(after, cast, hook["say"], duration, wpm)
+    if len(after_flags) > len(before_flags):
+        ctx.log(f"punch-up pass broke a rule ({'; '.join(f for f in after_flags if f not in before_flags)[:200]}); "
+                "kept the script as written", "warn")
+        return res, {**report, "before": {}}
+    changed = set(report["before"])
+    report.update(applied=True, notes=[n for n in (out.get("notes") or []) if isinstance(n, dict) and n.get("line", 0) - 1 in changed])
+    ctx.log(f"punch-up pass (joke-engineering): {len(changed)} line(s) sharpened"
+            + "".join(f"; line {n.get('line')} {n.get('state', '')}: {str(n.get('change', ''))[:80]}" for n in report["notes"][:4]))
+    return after, report
+
+
 async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int) -> dict:
     """Dialogue shorts: speaker-tagged lines written to the genre's rules, checked, revised up to 3 times, then
     grouped into the video's 10 s clips (a line is never split across clips)."""
@@ -215,6 +252,9 @@ async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int)
         revise = {"res": {k: res.get(k) for k in ("title", "scene", "lines", "turn", "button")}, "flags": flags}
     else:
         ctx.log("flags remain after 3 attempts: shown in Studio for you to fix by re-running Script", "warn")
+    punch = {"applied": False, "off": True}
+    if ctx.settings.get("dialogue", {}).get("punch_up", True):
+        res, punch = await _punch_up(ctx, res, cast, topic, hook, duration, wpm)
     lines = res["lines"]
     # no humanize.py pass here: the lines are performed text (audio tags, stretched words, CAPS, "!!") that a
     # character normaliser would flatten; the writer gets ig-human's rules in the prompt instead
@@ -228,7 +268,7 @@ async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int)
             "duration": duration, "wpm": wpm, "flags": flags, "plan": [], "turn": res.get("turn"), "button": res.get("button"),
             "callback": dlg.find_callback(lines), "claims_to_source": res.get("claims_to_source") or [],
             "cast": {s: cast[s]["name"] for s in dlg.speakers(cast)}, "placeholders": placeholders(clips),
-            "scene": dlg.scene_for({"scene": res.get("scene"), "lines": lines})}
+            "scene": dlg.scene_for({"scene": res.get("scene"), "lines": lines}), "punch_up": punch}
     if res.get("_fixture"):
         data["_fixture"] = True
     ctx.write_json("script/script.json", data)

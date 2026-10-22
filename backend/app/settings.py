@@ -95,7 +95,10 @@ DEFAULTS: dict[str, Any] = {
     # final wide keeps pulling back after the last word.
     "dialogue": {"bed": "auto", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.06, "motion": "still",
                  "elevenlabs_model": "eleven_v4", "elevenlabs_stability": 0.3, "elevenlabs_similarity": 0.8,
-                 "set": "auto", "look": "auto", "mascot_mouth": False, "fps": 30, "lufs": -15.0, "end_hold": 1.7},
+                 "set": "auto", "look": "auto", "mascot_mouth": False, "fps": 30, "lufs": -15.0, "end_hold": 1.7,
+                 # punch_up: after the script passes its checks, one more writer pass (the joke-engineering skill)
+                 # sharpens only the weak jokes; off saves a model call (and tokens on Groq's free plan)
+                 "punch_up": True},
     "agent": {
         # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
         # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
@@ -196,6 +199,8 @@ def validate_settings(s: dict[str, Any]) -> None:
         raise ValueError("dialogue fps must be 24, 25 or 30")
     if not -24 <= float(d.get("lufs", -15)) <= -9:
         raise ValueError("dialogue loudness must be between -24 and -9 LUFS")
+    if not isinstance(d.get("punch_up", True), bool):
+        raise ValueError("dialogue punch-up must be on or off")
     if not 0 <= float(d.get("end_hold", 1.7)) <= 4:
         raise ValueError("dialogue end hold must be 0-4 s")
     if s.get("script_gaps", "ask") not in ("ask", "rewrite"):

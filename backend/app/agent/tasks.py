@@ -341,6 +341,35 @@ Return the lines in order as {{"speaker": {speaker_enum}, "text": "<delivery tag
                       "profile_summary": profile_summary, "wpm": wpm, "revise": revise})
 
 
+def punch_up(lines: list[dict], cast: dict, topic: dict, hook_say: str) -> AgentTask:
+    """A punch-up pass on a finished dialogue script: diagnose each joke (joke-engineering) and rewrite only the weak
+    ones, keeping every line's speaker, timing, pose and board items, and the hook as line 1."""
+    names = {s: cast[s]["name"] for s in cast if isinstance(cast.get(s), dict) and cast[s].get("name")}
+    numbered = "\n".join(f"{k + 1}. {names.get(ln['speaker'], ln['speaker'])} ({ln['speaker']}, {ln.get('timing', 'normal')}): {ln['text']}"
+                         for k, ln in enumerate(lines))
+    prompt = f"""Use the `joke-engineering` skill for a punch-up pass on this dialogue short. Diagnose each punchline
+(H1-H6, the nine properties, the irony gradient) and rewrite ONLY the lines whose joke is weak. Most lines stay
+exactly as they are; setup lines stay plain.
+
+Keep: the same {len(lines)} lines in the same order, each line's speaker and timing, line 1 word for word (the
+approved hook: {hook_say}), delivery tags in square brackets (at most 2 a line), "..." where a beat sits, lines of
+2-6 words (never more than 9; a whiteboard explanation up to 16), in-story numbers only (no real-world statistics).
+
+{PLAIN_FUNNY}
+
+CHARACTERS: {_j(names)}
+TOPIC: {_j(topic)}
+SCRIPT:
+{numbered}
+
+Return {{"lines": [the full text of every line, in order, {len(lines)} strings], "notes": [{{"line": <1-based number>,
+"state": "H1".."H6", "change": "<what you changed and why, one short sentence>"}} for each line you changed]}}."""
+    schema = _obj({"lines": {**_arr(STR, len(lines)), "maxItems": len(lines)},
+                   "notes": _arr(_obj({"line": INT, "state": STR, "change": STR}))})
+    return AgentTask("punch_up", prompt, schema, ["joke-engineering"], "direction",
+                     {"lines": lines, "cast": cast, "topic": topic, "hook_say": hook_say})
+
+
 def phase_a(title: str, clips: list[dict], ratio: str, duration: int, style: str, theme: str,
             annotations: list[dict], voice_pref: str, revision_note: str = "") -> AgentTask:
     prompt = f"""Use the `directing-stickman-videos` skill. Setup is complete (do not ask again):

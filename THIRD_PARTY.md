@@ -10,6 +10,12 @@ folder carries its pack's `LICENSE`. All three are MIT.
 | YouTube agent skill | https://github.com/Jakeschincariol/youtube-agent-skill | `a2feb2104981a375ffd4f87ee04f4f5344ac43c6` | `yt-audit yt-chapters yt-comment yt-edit yt-package yt-plan yt-retention yt-script yt-seo yt-shorts yt-viral` | MIT, © 2026 Jake Schincariol |
 | Instagram agent skill | https://github.com/Jakeschincariol/instagram-agent-skill | `d03c56bb598be770c60b201f94237e5d1a4268a6` | `ig-audit ig-caption ig-carousel ig-comment ig-dm ig-human ig-plan ig-profile ig-reel ig-reply ig-repurpose ig-story ig-viral` | MIT, © 2026 Jake Schincariol |
 
+**Adapted (not vendored unmodified):** `joke-engineering`, from https://github.com/jwynia/agent-skills
+(commit `e02ec7e226a6e4f8419fd3b88a1d8e472d421b32`, `skills/creative/humor/joke-engineering`), declared MIT by its
+author jwynia. Trimmed to the method (nine properties, six diagnostic states, the irony gradient, anti-patterns)
+with examples and rules rewritten for dialogue shorts; `NOTICE.md` in the folder records the source and the
+licence. It drives the optional punch-up pass on dialogue scripts.
+
 The skill folders must stay siblings: `yt-viral/swipe.py`, `yt-chapters/chapters.py` and
 `yt-retention/retention.py` import from `../yt-script` and `../yt-edit`; `ig-viral/swipe.py` imports
 from `../ig-reel`.

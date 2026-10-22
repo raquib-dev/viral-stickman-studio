@@ -82,6 +82,11 @@ function DialogueScript({ s }: { s: any }) {
           : <div className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--serious)" }} data-testid="script-flags">
             <b>Flags</b> (re-run Script to fix):<ul className="mt-1 list-disc pl-5">{s.flags.map((f: string) => <li key={f}>{f}</li>)}</ul></div>}
         <ScriptGaps />
+        {s.punch_up?.applied && <div className="rounded-lg border border-line px-3 py-2 text-sm" data-testid="punch-up">
+          <b>Punch-up pass</b> (joke-engineering): {Object.keys(s.punch_up.before ?? {}).length} line(s) sharpened
+          {s.punch_up.notes?.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs text-ink-2">{s.punch_up.notes.map((n: any) =>
+            <li key={n.line}>line {n.line} · {n.state}: {n.change}{s.punch_up.before?.[n.line - 1] ? <span className="text-ink-3"> (was “{s.punch_up.before[n.line - 1]}”)</span> : null}</li>)}</ul>}
+        </div>}
         {s.clips.map((c: any) => (
           <div key={c.index} className="card-2">
             <div className="text-xs text-ink-3">Clip {c.index + 1} · {c.index * 10}-{c.index * 10 + 10}s</div>

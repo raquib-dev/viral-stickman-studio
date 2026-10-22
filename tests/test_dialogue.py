@@ -354,6 +354,9 @@ async def test_dry_run_pipeline_end_to_end(monkeypatch):
     sc = json.loads((root / "script/script.json").read_text())
     assert sc["mode"] == "dialogue" and sc["cast"] == {"a": "Zoe", "b": "Claude"} and len(sc["clips"]) == 3
     assert sc["lines"][0]["text"] == HOOK and sc["flags"] == []
+    assert sc["punch_up"]["applied"]                                   # the punch-up pass ran (Settings: on by default)
+    if sc["punch_up"]["before"]:
+        assert any(ln["text"] == "[flatly] Very clearly." for ln in sc["lines"])
     plan = json.loads((root / "scenes/dialogue.json").read_text())
     assert len(plan["plan"]) == len(sc["lines"])
     ass = (root / "final/captions.ass").read_text()
@@ -445,3 +448,51 @@ def test_package_writer_gets_the_real_length_ratio_and_script():
     assert "1280x720" in wide.prompt
     part = tasks.package_part("description", "old text", "funnier", "t", "x", 37.0, "9:16")
     assert "old text" in part.prompt and "funnier" in part.prompt and part.schema["required"] == ["text"]
+
+
+class _PunchCtx:
+    def __init__(self, reply):
+        self.reply, self.logs, self.calls = reply, [], 0
+        outer = self
+
+        class Agent:
+            async def run(self, task, ctx):
+                outer.calls += 1
+                assert task.name == "punch_up" and task.skills == ["joke-engineering"]
+                if isinstance(outer.reply, Exception):
+                    raise outer.reply
+                return outer.reply(task) if callable(outer.reply) else outer.reply
+        self.agent = Agent()
+
+    def log(self, text, level="info"):
+        self.logs.append((level, text))
+
+
+async def test_punch_up_keeps_good_changes_and_guards_the_format():
+    from backend.app.stages.studio import _punch_up
+    res = {**GOOD, "lines": [dict(ln) for ln in GOOD["lines"]]}
+    texts = [ln["text"] for ln in res["lines"]]
+    better = list(texts)
+    better[8] = "[flatly] Very clearly."                                # a sharper line: kept
+    better[0] = "Claude. Nice work."                                    # the hook is never rewritten: reverted
+    better[9] = "Anyone can say no at any time of the day or night, honestly."   # over the word cap: reverted
+    ctx = _PunchCtx({"lines": better, "notes": [{"line": 9, "state": "H6", "change": "cut the setup"},
+                                                {"line": 1, "state": "H1", "change": "x"}]})
+    out, report = await _punch_up(ctx, res, CAST, {}, {"say": HOOK}, 40, 150)
+    got = [ln["text"] for ln in out["lines"]]
+    assert got[8] == "[flatly] Very clearly." and got[0] == texts[0] and got[9] == texts[9]
+    assert all(a["speaker"] == b["speaker"] and a["timing"] == b["timing"] for a, b in zip(out["lines"], res["lines"]))
+    assert report["applied"] and report["before"] == {8: texts[8]} and [n["line"] for n in report["notes"]] == [9]
+    # the wrong number of lines, a rule broken, or a failed call: the script stays as written
+    for reply in ({"lines": texts[:-1]}, {"lines": [d.clean(t).replace("!!", "!").replace("aaau", "au") for t in texts]},   # the acting gone
+                  RuntimeError("Groq HTTP 413")):
+        same, rep = await _punch_up(_PunchCtx(reply), res, CAST, {}, {"say": HOOK}, 40, 150)
+        assert same is res and not rep["applied"]
+
+
+def test_punch_up_toggle_and_skill():
+    from backend.app.settings import DEFAULTS
+    from pathlib import Path
+    assert DEFAULTS["dialogue"]["punch_up"] is True
+    skill = (Path(__file__).resolve().parents[1] / ".claude/skills/joke-engineering/SKILL.md").read_text(encoding="utf-8")
+    assert "name: joke-engineering" in skill and "H4 Over-explained" in skill and "Output persistence" not in skill

@@ -88,8 +88,14 @@ DEFAULTS: dict[str, Any] = {
     # speaks it); dof = depth-of-field strength of the close-ups; motion "still" = the characters keep still and only
     # their faces move (expressions, blinks, lip sync), "lively" = nods, hand beats, gestures, the mascot hops
     # ElevenLabs for dialogue lines: the most expressive model (performs the script's audio tags) with a drama preset
-    "dialogue": {"bed": "room", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.035, "motion": "still",
-                 "elevenlabs_model": "eleven_v4", "elevenlabs_stability": 0.3, "elevenlabs_similarity": 0.8},
+    # set/look: "auto" = what the script picked (office or the whiteboard classroom; morning, rain, night or dusk
+    # outside the window), or force one. bed "auto" follows the look (rain, city at night, room by day).
+    # mascot_mouth: the reference style's mascots have no mouth (they act with their eyes); true adds a small one
+    # that opens with the voice. fps/lufs: the reference reels are 30 fps at about -15 LUFS. end_hold: seconds the
+    # final wide keeps pulling back after the last word.
+    "dialogue": {"bed": "auto", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.06, "motion": "still",
+                 "elevenlabs_model": "eleven_v4", "elevenlabs_stability": 0.3, "elevenlabs_similarity": 0.8,
+                 "set": "auto", "look": "auto", "mascot_mouth": False, "fps": 30, "lufs": -15.0, "end_hold": 1.7},
     "agent": {
         # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
         # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
@@ -128,6 +134,9 @@ DEFAULTS: dict[str, Any] = {
     "voice": {"tts": "auto", "kokoro_voice_male": "am_michael", "kokoro_voice_female": "af_heart",
               # the mascot in dialogue shorts; empty = the male voice
               "kokoro_voice_mascot": "am_puck", "elevenlabs_voice_mascot": "", "groq_voice_mascot": "",
+              # extra AI characters in group dialogue shorts: mascot2 deep and terse, mascot3 bright and quick
+              "kokoro_voice_mascot2": "am_onyx", "elevenlabs_voice_mascot2": "", "groq_voice_mascot2": "",
+              "kokoro_voice_mascot3": "am_echo", "elevenlabs_voice_mascot3": "", "groq_voice_mascot3": "",
               "piper_model": "", "max_speedup": 1.3,
               # ElevenLabs (cloud): voice IDs from your account (defaults: premade "Adam" and "Rachel")
               "elevenlabs_voice_male": "pNInz6obpgDQGcFmaJgB", "elevenlabs_voice_female": "21m00Tcm4TlvDq8ikWAM",
@@ -179,6 +188,16 @@ def validate_settings(s: dict[str, Any]) -> None:
         raise ValueError("dialogue motion must be still or lively")
     if not 0.7 <= float(d.get("mascot_pitch", 1.0)) <= 1.5:
         raise ValueError("mascot pitch must be between 0.7 and 1.5")
+    if d.get("set", "auto") not in ("auto", "office", "classroom"):
+        raise ValueError("dialogue set must be auto, office or classroom")
+    if d.get("look", "auto") not in ("auto", "morning", "rain", "night", "dusk"):
+        raise ValueError("dialogue look must be auto, morning, rain, night or dusk")
+    if int(d.get("fps", 30)) not in (24, 25, 30):
+        raise ValueError("dialogue fps must be 24, 25 or 30")
+    if not -24 <= float(d.get("lufs", -15)) <= -9:
+        raise ValueError("dialogue loudness must be between -24 and -9 LUFS")
+    if not 0 <= float(d.get("end_hold", 1.7)) <= 4:
+        raise ValueError("dialogue end hold must be 0-4 s")
     if s.get("script_gaps", "ask") not in ("ask", "rewrite"):
         raise ValueError("script gaps must be ask or rewrite")
     if s["captions"].get("engine", "local") not in ("local", "groq"):

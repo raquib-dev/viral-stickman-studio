@@ -376,8 +376,10 @@ class ThreeJSBackend:
         out = clip.out_path
         assert out is not None and clip.cast and clip.plan is not None
         out.parent.mkdir(parents=True, exist_ok=True)
-        fps = int(self.cfg.get("fps", 24))
         dcfg = self.settings.get("dialogue", {})
+        fps = int(dcfg.get("fps", 30))               # the reference reels are 30 fps
+        sc = clip.scene or {"set": "office", "look": "night"}
+        final = bool(sc.get("final"))
         wpm = float(self.settings.get("speaking_wpm", 150))
         # performed lines go to ElevenLabs' most expressive model with a drama preset (low stability), whatever the
         # narrated videos use; other engines get the words without the audio tags (tts.synth removes them)
@@ -390,13 +392,17 @@ class ThreeJSBackend:
             voice = clip.cast[ln["speaker"]]["voice"]
             f = out.with_suffix(f".line{k:02d}.wav")
             got = await asyncio.to_thread(tts.synth, ln["text"], f, vs, voice, log)
-            if got and voice == "mascot":
-                await asyncio.to_thread(tts.pitch, got, float(dcfg.get("mascot_pitch", 1.0)))
+            # a character's own pitch (Cursor is brighter), else the Settings mascot pitch for the main AI
+            pitch = clip.cast[ln["speaker"]].get("pitch") or (float(dcfg.get("mascot_pitch", 1.0)) if voice == "mascot" else 1.0)
+            if got and abs(float(pitch) - 1.0) > 1e-3:
+                await asyncio.to_thread(tts.pitch, got, float(pitch))
             parts.append(got)
             durs.append(probe(got)["duration"] if got else dlg.line_seconds(ln["text"], wpm))
         timing = dlg.layout(durs, [dlg.timing_of(ln) for ln in clip.lines], clip.duration,
-                            float(self.settings["voice"].get("max_speedup", 1.3)), pad=False)
-        dur = dlg.clip_end(timing, clip.duration, fps)      # the clip ends when its talk does: no dead air before the next
+                            float(self.settings["voice"].get("max_speedup", 1.3)), pad=False,
+                            lead=dlg.clip_lead(clip.index == 0, dlg.timing_of(clip.lines[0]) if clip.lines else "normal"))
+        # the clip ends when its talk does (no dead air before the next); the last one holds for the pull-back
+        dur = dlg.clip_end(timing, clip.duration, fps, float(dcfg.get("end_hold", 1.7)) if final else dlg.TAIL)
         if timing["tempo"] > 1.001:
             log(f"clip {clip.index + 1}: lines sped up x{timing['tempo']} to fit 10 s", "warn")
         if timing["overflow"] > 0.05:
@@ -413,7 +419,8 @@ class ThreeJSBackend:
         scene = dlg.build_scene(clip.plan, timing, clip.cast, dlg.speaker_mouths(envelope, clip.plan, timing, fps), fps, w, h,
                                 dur, seed=7 + clip.index * 31, quality=self.cfg.get("quality", "high"),
                                 theme=clip.theme if clip.theme == "light" else "dark", dof=float(dcfg.get("dof", 0.035)),
-                                motion=str(dcfg.get("motion", "still")))
+                                motion=str(dcfg.get("motion", "still")), scene=sc, final=final,
+                                board_before=sc.get("board_before"), mascot_mouth=bool(dcfg.get("mascot_mouth", False)))
         if self.cfg.get("animation_pack", "auto") == "off":
             scene["pack"] = False
         errs = validate_scene(scene)
@@ -421,7 +428,7 @@ class ThreeJSBackend:
             raise RenderError(f"dialogue scene is invalid: {'; '.join(errs[:4])}", retryable=False)
         scene_path = out.with_suffix(".scene.json")
         scene_path.write_text(json.dumps(scene, indent=1), encoding="utf-8")
-        names = {k: clip.cast[k]["name"] for k in dlg.SPEAKERS}
+        names = {k: clip.cast[k]["name"] for k in dlg.speakers(clip.cast)}
         log(f"local-threejs clip {clip.index + 1}: dialogue, {len(clip.lines)} lines · "
             + ", ".join(dlg.shot_label(p["shot"], names) for p in clip.plan)
             + (" · lip sync from the voices" if voiced else " · no voice engine: silent"))

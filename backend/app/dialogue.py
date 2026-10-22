@@ -1,23 +1,28 @@
-"""Two-character dialogue shorts: a person and a mascot trading short, deadpan lines at a late-night desk.
+"""Dialogue shorts: a person and one to three AI mascots trading short, deadpan lines at a desk (or at a whiteboard).
 
 Pieces, in pipeline order:
-- the cast (names, voices, looks) with defaults, per project;
+- the cast (names, voices, looks) with defaults, per project: a (the person), b (the main AI) and optional c, d
+  (extra AIs for group episodes);
+- the scene: the set (office desk, or the classroom whiteboard for explainers) and the look outside the window
+  (morning, rain, night, dusk);
 - the writing rules for the genre and a checker for them (`dialogue_flags`);
 - grouping the lines into the video's 10 s clips (`group_lines`), never splitting a line;
 - delivery: each line carries its performance for an expressive voice (ElevenLabs v4 audio tags like
   [exasperated], stretched words like "Claaauude!!", CAPS emphasis) and a timing (quick, normal, or a beat:
   a sharp look before answering); tags are removed for captions and for voices that cannot perform them;
-- the direction per line (`plan_shots`): a vocabulary of shots (centred and off-centre close-ups, over-the-
-  shoulder shots, a medium two-shot, two wides) rotated by rules, hard cuts, faces from the words and tags.
-  Deterministic, so it costs nothing and never drifts;
+- the direction per line (`plan_shots`), modelled on measured reference reels: her medium close-up, each AI
+  at desk height with her soft behind it (alternating sides), a frontal wide every 8-12 lines and for the last
+  line; the classroom adds the board shot. Hard cuts about 0.15 s before each speaker's first word, her pose set
+  per shot, faces from the words and tags. Deterministic, so it costs nothing and never drifts;
 - timing the voiced lines inside a clip (`layout`) and turning that into a renderer scene (`build_scene`);
 - caption events per line (`caption_lines`).
-The renderer's layout numbers (desk, positions) come from renderer/catalog.json (sets.office).
+The renderer's layout numbers (desk, positions) come from renderer/catalog.json (sets.office, sets.classroom).
 """
 from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from pathlib import Path
 
@@ -25,17 +30,28 @@ from .paths import REPO_ROOT
 
 CATALOG = json.loads((REPO_ROOT / "renderer" / "catalog.json").read_text(encoding="utf-8"))
 OFFICE = CATALOG["sets"]["office"]
-SPEAKERS = ("a", "b")
+CLASSROOM = CATALOG["sets"]["classroom"]
+SPEAKERS = ("a", "b")                 # always present
+ALL_SPEAKERS = ("a", "b", "c", "d")   # c, d: extra AIs, when enabled in the cast
+SETS = ("office", "classroom")
+LOOKS = ("morning", "rain", "night", "dusk")
+POSES = ("rest", "mug", "phone", "crossed", "temple", "palm", "both", "finger")
+BOARD_OPS = ("title", "word", "strike", "figure", "box", "arrow", "label")
 
 DEFAULT_CAST = {
     "a": {"name": "Mia", "role": "a tired, exacting developer who says no a lot", "kind": "chibi", "voice": "female",
           "appearance": {"skin": "#f1c7a5", "hair": "#2b1d16", "hair_style": "long", "top": "#f2b31b", "shirt": "#1d1d22",
-                         "bottom": "#2c3140", "shoes": "#2a2a2e", "glasses": "round", "headphones": True, "variant": 0}},
-    "b": {"name": "Claude", "role": "an eager, literal AI coding assistant", "kind": "mascot", "voice": "mascot",
-          "appearance": {"shape": "flower", "color": "#e8743c"}},
+                         "bottom": "#2c3140", "shoes": "#2a2a2e", "glasses": "round", "headphones": False, "variant": 0}},
+    "b": {"name": "Claude", "role": "an earnest, literal AI assistant that asks one question too many", "kind": "mascot",
+          "voice": "mascot", "appearance": {"shape": "flower", "color": "#e8743c"}},
+    "c": {"name": "Codex", "role": "a terse AI that acts first and never asks; its answer is usually \"Done.\"",
+          "kind": "mascot", "voice": "mascot2", "enabled": False,
+          "appearance": {"shape": "cloud", "color": "#3f63f2", "color2": "#8b3fd8", "feet": "#2a2f8f"}},
+    "d": {"name": "Cursor", "role": "an eager AI that starts before it is asked", "kind": "mascot", "voice": "mascot3",
+          "enabled": False, "pitch": 1.12, "appearance": {"shape": "cube", "color": "#2b2e36", "eyes": "#ffffff"}},
 }
-KINDS = {"a": ("chibi", "stickman"), "b": ("mascot", "chibi", "stickman")}
-VOICES = ("female", "male", "mascot")
+KINDS = {"a": ("chibi", "stickman"), "b": ("mascot", "chibi", "stickman"), "c": ("mascot",), "d": ("mascot",)}
+VOICES = ("female", "male", "mascot", "mascot2", "mascot3")
 
 
 def _merge(a: dict, b: dict) -> dict:
@@ -48,7 +64,7 @@ def _merge(a: dict, b: dict) -> dict:
 def cast_for(project: dict) -> dict:
     """The project's cast over the defaults, with unknown kinds/voices replaced by the defaults."""
     cast = _merge(DEFAULT_CAST, project.get("cast") or {})
-    for s in SPEAKERS:
+    for s in ALL_SPEAKERS:
         c = cast[s]
         if c.get("kind") not in KINDS[s]:
             c["kind"] = DEFAULT_CAST[s]["kind"]
@@ -58,6 +74,26 @@ def cast_for(project: dict) -> dict:
     return cast
 
 
+def speakers(cast: dict) -> tuple[str, ...]:
+    """The speakers in this cast: a and b, plus the extra AIs that are switched on."""
+    return SPEAKERS + tuple(s for s in ("c", "d") if (cast.get(s) or {}).get("enabled"))
+
+
+def scene_for(script: dict, settings: dict | None = None) -> dict:
+    """The set and the window look: the Settings value when forced, else what the script picked, else the defaults
+    (the office at night). The classroom needs board lines and only two speakers."""
+    d = (settings or {}).get("dialogue", {})
+    sc = script.get("scene") or {}
+    lines = script.get("lines") or [ln for c in script.get("clips", []) for ln in c.get("lines", [])]
+    st = d.get("set", "auto") if d.get("set", "auto") != "auto" else sc.get("set")
+    st = st if st in SETS else "office"
+    if st == "classroom" and any(ln.get("speaker") in ("c", "d") for ln in lines):
+        st = "office"
+    look = d.get("look", "auto") if d.get("look", "auto") != "auto" else sc.get("look")
+    look = look if look in LOOKS else ("morning" if st == "classroom" else "night")
+    return {"set": st, "look": look}
+
+
 def is_dialogue(project: dict) -> bool:
     return project.get("format") == "dialogue"
 
@@ -65,12 +101,15 @@ def is_dialogue(project: dict) -> bool:
 # ---- delivery: tags, stretched words, timing ------------------------------------------------------
 
 TAG_RE = re.compile(r"\[([^\[\]]{1,40})\]")
-PLAN_VERSION = 2       # bump when the direction rules change, so saved shot plans are redone
-LEAD, TAIL = 0.22, 0.3
+PLAN_VERSION = 3       # bump when the direction rules change, so saved shot plans are redone
+# measured on the reference reels: the first word at 0.37 s, a median 0.47 s between lines (quick comebacks
+# 0.15-0.3 s, beats 0.6-1.0 s), cuts 0.15 s before the next speaker's first word, about 1.6 s after the last word
+LEAD, TAIL = 0.37, 0.15
+CUT_LEAD = 0.15
 # silence before a line, by its timing: an answer that comes straight back, a normal turn, or a beat (a sharp
 # look first). Floors are how far each can shrink when a clip is full.
-GAPS = {"quick": 0.06, "normal": 0.2, "beat": 0.75}
-GAP_FLOOR = {"quick": 0.02, "normal": 0.08, "beat": 0.4}
+GAPS = {"quick": 0.2, "normal": 0.45, "beat": 0.9}
+GAP_FLOOR = {"quick": 0.1, "normal": 0.25, "beat": 0.55}
 TIMINGS = tuple(GAPS)
 PAUSE_RE = re.compile(r"^\s*(\.\.\.|…)")
 
@@ -149,7 +188,8 @@ def clips_from_lines(lines: list[dict], groups: list[list[int]]) -> list[dict]:
     pipeline, the joined on-screen text."""
     out = []
     for k, g in enumerate(groups):
-        ls = [{"i": i, "speaker": lines[i]["speaker"], "text": lines[i]["text"], "timing": timing_of(lines[i])} for i in g]
+        ls = [{"i": i, "speaker": lines[i]["speaker"], "text": lines[i]["text"], "timing": timing_of(lines[i]),
+               **{k: lines[i][k] for k in ("pose", "board") if lines[i].get(k)}} for i in g]
         out.append({"index": k, "stage": "dialogue", "vo": " ".join(clean(ln["text"]) for ln in ls), "lines": ls, "beats": []})
     return out
 
@@ -166,6 +206,7 @@ NUMBER_WORDS = re.compile(r"\b(one|two|three|four|five|six|seven|eight|nine|ten|
 STAT_LIKE = re.compile(r"%|\bpercent\b|\bstud(y|ies)\b|\bresearch\b|\bscientists?\b|\bstatistic|\bsurvey\b|\baccording to\b|"
                        r"\bdata shows?\b|\bon average\b", re.I)
 MAX_LINE_WORDS = 9
+MAX_BOARD_LINE_WORDS = 16      # an explainer line on the whiteboard shot may run longer
 
 
 def _content(text: str) -> list[str]:
@@ -194,7 +235,9 @@ def dialogue_flags(res: dict, cast: dict, hook_say: str, duration: int, wpm: flo
     lines, flags = res.get("lines") or [], []
     n = len(lines)
     n_min, n_max = max(4, round(duration / 3.6)), round(duration / 1.5)
-    names = {s: cast[s]["name"] for s in SPEAKERS}
+    who = speakers(cast)
+    names = {s: cast[s]["name"] for s in who}
+    scene = res.get("scene") or {}
     if not n_min <= n <= n_max:
         flags.append(f"{n} lines for {duration}s; write {n_min}-{n_max} (short lines, quick exchange)")
     if lines and lines[0].get("speaker") != "a":
@@ -203,13 +246,20 @@ def dialogue_flags(res: dict, cast: dict, hook_say: str, duration: int, wpm: flo
         flags.append(f"line 1 must be the approved hook, word for word: \"{hook_say}\"")
     run = 1
     for k, ln in enumerate(lines):
-        if ln.get("speaker") not in SPEAKERS:
-            flags.append(f"line {k + 1}: speaker must be \"a\" ({names['a']}) or \"b\" ({names['b']})")
+        if ln.get("speaker") not in who:
+            flags.append(f"line {k + 1}: speaker must be one of " + ", ".join(f'"{s}" ({names[s]})' for s in who))
             continue
         text = ln.get("text", "")
         wc = words(text)
-        if wc > MAX_LINE_WORDS:
-            flags.append(f"line {k + 1} has {wc} words (max {MAX_LINE_WORDS}; most lines 2-7)")
+        cap = MAX_BOARD_LINE_WORDS if ln.get("board") else MAX_LINE_WORDS
+        if wc > cap:
+            flags.append(f"line {k + 1} has {wc} words (max {cap}; most lines 2-6)")
+        if ln.get("pose") is not None and ln.get("pose") not in POSES:
+            flags.append(f"line {k + 1}: pose must be one of {', '.join(POSES)}")
+        for op in ln.get("board") or []:
+            if not isinstance(op, dict) or op.get("op") not in BOARD_OPS:
+                flags.append(f"line {k + 1}: board items are {{op: {'|'.join(BOARD_OPS)}, text}}")
+                break
         if wc == 0:
             flags.append(f"line {k + 1} is empty")
         if "{{" in text:
@@ -227,13 +277,17 @@ def dialogue_flags(res: dict, cast: dict, hook_say: str, duration: int, wpm: flo
         if run == 4:
             flags.append(f"line {k + 1}: {names[ln['speaker']]} has 4 lines in a row (max 3)")
     if n:
-        avg = sum(words(ln.get("text", "")) for ln in lines) / n
+        avg = sum(words(ln.get("text", "")) for ln in lines if not ln.get("board")) / max(1, sum(1 for ln in lines if not ln.get("board")))
         if avg > 7.5:
-            flags.append(f"lines average {avg:.1f} words; keep them short (2-7)")
-        for s in SPEAKERS:
+            flags.append(f"lines average {avg:.1f} words; keep them short (2-6)")
+        for s in who:
             share = sum(1 for ln in lines if ln.get("speaker") == s) / n
-            if share < 0.3:
-                flags.append(f"{names[s]} has only {share:.0%} of the lines (at least 30%)")
+            need = 0.3 if s in SPEAKERS and len(who) == 2 else (0.25 if s == "a" else 0.08)
+            if share < need:
+                flags.append(f"{names[s]} has only {share:.0%} of the lines (at least {need:.0%})")
+        short = sum(1 for ln in lines if words(ln.get("text", "")) <= 2)
+        if short < 2:
+            flags.append("use one- or two-word lines as punches (\"No.\" \"Done.\" \"You counted?\"): at least 2")
         performed = sum(1 for ln in lines if tags(ln.get("text", "")) or re.search(r"([a-zA-Z])\1\1|!!", clean(ln.get("text", ""))))
         if performed < max(2, n // 3):
             flags.append(f"write the performance into the lines: only {performed} of {n} carry a delivery tag or a stretched "
@@ -254,6 +308,18 @@ def dialogue_flags(res: dict, cast: dict, hook_say: str, duration: int, wpm: flo
         opening = set().union(*(set(_content(ln.get("text", ""))) for ln in lines[:3])) | {squash(names["a"]), squash(names["b"])}
         if not set().union(*(set(_content(ln.get("text", ""))) for ln in lines[-2:])) & opening:
             flags.append("the ending should loop back to the opening (reuse a word, a name or the situation from the first lines)")
+    if scene.get("set") is not None and scene.get("set") not in SETS:
+        flags.append(f"scene.set must be one of {', '.join(SETS)}")
+    if scene.get("look") is not None and scene.get("look") not in LOOKS:
+        flags.append(f"scene.look must be one of {', '.join(LOOKS)}")
+    if scene.get("set") == "classroom":
+        ops = [op for ln in lines for op in (ln.get("board") or []) if isinstance(op, dict)]
+        if not any(op.get("op") == "title" for op in ops):
+            flags.append("a classroom explainer opens the board with a title item (the question being explained)")
+        if len(ops) < 4:
+            flags.append(f"the whiteboard needs at least 4 items across the explanation (got {len(ops)})")
+        if any(ln.get("speaker") in ("c", "d") for ln in lines):
+            flags.append("the classroom set has two speakers only (a and b)")
     title = (res.get("title") or "").strip()
     if not title.endswith("?"):
         flags.append("the title ends with a question to the viewer")
@@ -276,97 +342,150 @@ def _norm(t: str) -> str:
     return squash(t)
 
 
-# ---- direction: faces and shots ------------------------------------------------------------------
+# ---- direction: faces, poses and shots -------------------------------------------------------------
 
-TAG_FACE = [(r"exasperat|annoy|groan|sigh|fed up|irritat|frustrat", "skeptical"), (r"deadpan|flat|sarcas|dry|unimpress", "skeptical"),
+TAG_FACE = [(r"embarrass|sheepish|blush|mortif|flustered", "embarrassed"), (r"tender|fond|warm|content|softly smil", "content"),
+            (r"worri|anxious|concern|uneasy", "worried"),
+            (r"exasperat|annoy|groan|sigh|fed up|irritat|frustrat", "skeptical"), (r"deadpan|flat|sarcas|dry|unimpress", "skeptical"),
             (r"angry|furious|snap|shout", "angry"), (r"excit|cheer|happy|proud|delight|laugh|giggl|beam", "happy"),
-            (r"surpris|gasp|shock|stunn", "surprised"), (r"nervous|unsure|hesita|confus", "confused"),
+            (r"surpris|gasp|shock|stunn", "surprised"), (r"nervous|unsure|hesita|confus|guilty|caught", "confused"),
             (r"whisper|quiet|soft|think|ponder", "thinking"), (r"sad|hurt|sulk|defeat", "sad")]
 
 
 def _expr(text: str, speaker: str) -> str:
-    """The face for a line: from its delivery tag when it has one, else from the words and punctuation."""
+    """The face for a line: from its delivery tag when it has one, else from the words and punctuation. The AIs
+    act with their eyes: an unsure or caught-out line gets small square eyes ("caught")."""
+    face = None
     for tag in tags(text):
-        for rx, face in TAG_FACE:
+        for rx, f in TAG_FACE:
             if re.search(rx, tag):
-                return face
+                face = f
+                break
+        if face:
+            break
     t = clean(text)
-    if PAUSE_RE.match(t):
-        return "thinking" if speaker == "a" else "skeptical"
-    if t.endswith("?"):
-        return "confused" if speaker == "a" else "surprised"
-    if t.endswith("!"):
-        return "happy"
-    if re.search(r"\b(no|not|never|can't|cannot|wrong|bad|off)\b", t, re.I):
-        return "skeptical"
-    return "neutral"
+    if face is None:
+        if PAUSE_RE.match(t):
+            face = "thinking" if speaker == "a" else "caught"
+        elif t.endswith("?"):
+            face = "confused" if speaker == "a" else "surprised"
+        elif t.endswith("!"):
+            face = "happy"
+        elif re.search(r"\b(no|not|never|can't|cannot|wrong|bad|off)\b", t, re.I):
+            face = "skeptical"
+        else:
+            face = "neutral"
+    if speaker != "a" and face in ("confused", "thinking", "worried", "embarrassed", "sad"):
+        face = "caught"
+    return face
 
 
-# shot vocabulary: per speaker a centred close-up, an off-centre close-up (rule of thirds) and a shot with the
-# other character in frame (over the mascot's shoulder onto her; a low angle on the mascot with her behind); for
-# both: a medium two-shot and two wides
-SINGLE = ("cu", "third", "ots")
-
-
+# shot vocabulary (measured on the reference reels):
+#   office:    a_cu (her MCU, centred), a_third (her MCU off-centre), m_<s>_l / m_<s>_r (an AI at desk height, her
+#              body soft behind it on the left / right of frame), wide (frontal, the whole desk)
+#   classroom: board (3/4 wide: the whiteboard, the AI on its books with the pointer, her in profile), a_side (her
+#              3/4 profile MCU), b_books (the AI on its books, close)
 def shot_label(shot: str, names: dict) -> str:
+    if shot == "wide":
+        return "wide"
+    if shot == "board":
+        return "whiteboard"
+    if shot == "a_cu":
+        return f"{names.get('a', 'a')} close-up"
+    if shot == "a_third":
+        return f"{names.get('a', 'a')} close-up (off-centre)"
+    if shot == "a_side":
+        return f"{names.get('a', 'a')} close-up (profile)"
+    if shot == "b_books":
+        return f"{names.get('b', 'b')} close-up (on the books)"
+    if shot.startswith("m_"):
+        _, who, side = shot.split("_")
+        return f"{names.get(who, who)} at desk height ({'angle 2' if side == 'l' else 'angle 1'})"
+    # plans saved by older versions
     if shot in ("two", "wide0", "wide1"):
         return {"two": "two-shot", "wide0": "wide", "wide1": "wide (left)"}[shot]
-    who, kind = shot.split("_", 1)
-    both = "low angle, both in frame" if who == "b" else "over the shoulder"
-    return f"{names.get(who, who)} " + {"cu": "close-up", "third": "close-up (off-centre)", "ots": both}[kind]
+    return shot
 
 
-def plan_shots(lines: list[dict]) -> list[dict]:
-    """Per line: the shot, the face and a gesture. Direction rules:
-    - open on the speaker's centred close-up (the hook lands in the face);
-    - a beat (a sharp look before answering) plays in the responder's centred close-up, cut before they speak;
-    - quick answers play over the shoulder, so both characters are in frame for the back-and-forth;
-    - the same person speaking twice in a row gets a new angle: the two-shot or a wide;
-    - otherwise each speaker rotates off-centre close-up -> over the shoulder -> close-up, never the same framing
-      twice in a row, and a two-shot or wide comes at least every 5 lines;
-    - the button (last line) plays wide, the line before it as a two-shot."""
+def _poses(lines: list[dict], look: str) -> list[str]:
+    """Her pose per line: the script's when it names one, else the last one (a pose holds until changed). The
+    default is a mug in her hands on a morning, hands on the desk otherwise."""
+    cur = "mug" if look == "morning" else "rest"
+    out = []
+    for ln in lines:
+        if ln.get("pose") in POSES:
+            cur = ln["pose"]
+        out.append(cur)
+    return out
+
+
+def plan_shots(lines: list[dict], scene: dict | None = None) -> list[dict]:
+    """Per line: the shot, whether it cuts, the face, her pose and the board items. Direction rules (from the
+    measured reference reels):
+    - office: open on her close-up (a wide when three or more characters talk); her lines alternate centred and
+      off-centre close-ups; each AI's line plays at desk height with her soft behind it, alternating sides; a wide
+      after 9 lines without one, and the last line is always the wide (the pull-back follows);
+    - classroom: lines that write on the board play on the board shot, her lines in profile, the AI's on its books;
+    - the same speaker twice in a row keeps the shot (no cut), at most for two lines."""
+    scene = scene or {"set": "office", "look": "night"}
     n, out = len(lines), []
-    rot = {s: 0 for s in SPEAKERS}
-    since_both, wide_alt = 0, 0
-    order = ("third", "ots", "cu")
+    group = len({ln.get("speaker") for ln in lines}) > 2
+    poses = _poses(lines, scene.get("look", "night"))
+    a_count, side, since_wide, held = 0, {}, 0, 0
     for k, ln in enumerate(lines):
         s, text, tm = ln["speaker"], ln["text"], timing_of(ln)
-        prev = out[-1]["shot"] if out else None
-        if k == 0:
-            shot = f"{s}_cu"
-        elif n >= 4 and k == n - 1:
-            shot = f"wide{wide_alt % 2}"
-        elif n >= 4 and k == n - 2:
-            shot = "two"
-        elif lines[k - 1]["speaker"] == s:
-            shot = "two" if prev != "two" else f"wide{wide_alt % 2}"
-        elif tm == "beat":
-            shot = f"{s}_cu"
-        elif tm == "quick":
-            shot = f"{s}_ots"
-        elif since_both >= 4:
-            shot = "two" if prev != "two" else f"wide{wide_alt % 2}"
+        prev = out[-1] if out else None
+        cut = True
+        if scene.get("set") == "classroom":
+            shot = "board" if (k == 0 or ln.get("board")) else ("a_side" if s == "a" else "b_books")
+        elif k == 0:
+            shot = "wide" if group else "a_cu"
+        elif k == n - 1 and n >= 4:
+            shot = "wide"
+        elif since_wide >= 9 and s == "a":
+            shot = "wide"
+        elif s == "a":
+            shot = ("a_cu", "a_cu", "a_third")[a_count % 3]
+            a_count += 1
         else:
-            shot = f"{s}_{order[rot[s] % 3]}"
-            rot[s] += 1
-        if shot == prev:                                  # never the same framing twice in a row
-            shot = f"{s}_{order[(order.index(shot.split('_', 1)[1]) + 1) % 3]}" if "_" in shot else ("two" if shot != "two" else "wide0")
-        if shot.startswith("wide"):
-            wide_alt += 1
-        both = shot in ("two", "wide0", "wide1") or shot.endswith("_ots")
-        since_both = 0 if both else since_both + 1
+            side[s] = side.get(s, -1) + 1
+            shot = f"m_{s}_{'r' if side[s] % 2 == 0 else 'l'}"
+        # one speaker going on: hold the shot (no cut) once; a third line in a row gets a new framing
+        if prev and lines[k - 1]["speaker"] == s and k != n - 1 and held < 1 and not (scene.get("set") == "classroom" and ln.get("board") and prev["shot"] != "board"):
+            shot, cut = prev["shot"], False
+            held += 1
+        else:
+            held = 0
+        if cut and prev and shot == prev["shot"] and shot != "wide":
+            if shot.startswith("m_"):
+                shot = shot[:-1] + ("l" if shot.endswith("r") else "r")
+            elif shot in ("a_cu", "a_third"):
+                shot = "a_third" if shot == "a_cu" else "a_cu"
+        since_wide = 0 if shot in ("wide", "board") else since_wide + 1
         gesture = None
         if s == "a" and (clean(text).endswith("?") or tm == "beat"):
             gesture = "think"            # hand to the cheek (lively motion only)
-        if s == "b" and clean(text).endswith("!"):
+        if s != "a" and clean(text).endswith("!"):
             gesture = "cheer"            # the mascot hops (lively motion only)
-        out.append({"i": k, "speaker": s, "shot": shot, "timing": tm, "face": _expr(text, s), "gesture": gesture})
+        item = {"i": k, "speaker": s, "shot": shot, "cut": cut, "timing": tm, "face": _expr(text, s), "gesture": gesture,
+                "pose": poses[k]}
+        if ln.get("board"):
+            item["board"] = [{"op": op.get("op"), "text": str(op.get("text", ""))[:28], **({"at": op["at"]} if op.get("at") else {})}
+                             for op in ln["board"] if isinstance(op, dict) and op.get("op") in BOARD_OPS]
+        out.append(item)
     return out
 
 
 # ---- render-time timing ---------------------------------------------------------------------------
 
-def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_speedup: float = 1.25, pad: bool = True) -> dict:
+def clip_lead(first: bool, timing: str) -> float:
+    """Silence before a clip's first line: 0.37 s at the start of the video; later clips continue the conversation,
+    so the previous clip's tail plus this lead is the line's own gap."""
+    return LEAD if first else max(0.05, GAPS.get(timing, GAPS["normal"]) - TAIL)
+
+
+def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_speedup: float = 1.25, pad: bool = True,
+           lead: float | None = None) -> dict:
     """Where each voiced line plays inside the clip. The silence before a line follows its timing (quick 0.06 s,
     normal 0.2 s, a beat 0.75 s); when the clip is full the gaps shrink to their floors before speech speeds up
     (up to max_speedup). Spare time goes to the start and the end of the clip, never into the conversation;
@@ -377,7 +496,8 @@ def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_sp
     tms = [t if t in GAPS else "normal" for t in timings]
     gaps = [0.0] + [GAPS[tms[k]] for k in range(1, n)]
     floor = [0.0] + [GAP_FLOOR[tms[k]] for k in range(1, n)]
-    speech, room, tempo = sum(durs), clip_len - LEAD - TAIL, 1.0
+    lead0 = LEAD if lead is None else lead
+    speech, room, tempo = sum(durs), clip_len - lead0 - TAIL, 1.0
     if speech + sum(gaps) > room:
         over = speech + sum(gaps) - room
         shrinkable = sum(g - f for g, f in zip(gaps, floor))
@@ -389,7 +509,7 @@ def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_sp
     spoken = [d / tempo for d in durs]
     used = sum(spoken) + sum(gaps)
     overflow = max(0.0, used - room)
-    lead = LEAD + (min(0.3, max(0.0, room - used) / 2) if pad else 0.0)
+    lead = lead0 + (min(0.3, max(0.0, room - used) / 2) if pad else 0.0)
     starts, ends, t = [], [], lead
     for d, g in zip(spoken, gaps):
         t += g
@@ -399,11 +519,12 @@ def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_sp
     return {"starts": starts, "ends": ends, "tempo": round(tempo, 3), "overflow": round(overflow, 3)}
 
 
-def clip_end(timing: dict, clip_len: float = 10.0, fps: int = 24) -> float:
-    """How long a dialogue clip runs: until its last line ends plus a short tail, at most clip_len (whole frames).
-    Clips are not padded to 10 s, so the next clip's first line follows like a normal reply, not after dead air."""
-    end = timing["ends"][-1] + TAIL if timing.get("ends") else clip_len
-    return round(min(clip_len, max(2.0, end)) * fps) / fps
+def clip_end(timing: dict, clip_len: float = 10.0, fps: int = 24, tail: float = TAIL) -> float:
+    """How long a dialogue clip runs: until its last line ends plus a short tail (whole frames), at most clip_len;
+    the final clip's longer tail is the pull-back after the last word. Clips are not padded to 10 s, so the next
+    clip's first line follows like a normal reply, not after dead air."""
+    end = timing["ends"][-1] + tail if timing.get("ends") else clip_len
+    return round(min(clip_len + max(0.0, tail - TAIL), max(2.0, end)) * fps) / fps
 
 
 # ---- the renderer scene -----------------------------------------------------------------------------
@@ -412,100 +533,206 @@ def _head(pos: list[float], height: float) -> list[float]:
     return [pos[0], pos[1] + height, pos[2]]
 
 
-def camera_key(shot: str, t: float, cast: dict) -> dict:
-    """A cut camera key for a shot of the vocabulary, framed for the office set's layout."""
-    A = _head(OFFICE["person"], 1.17)                 # the chibi's head centre at rest
-    B = _head(OFFICE["mascot"], 0.16)                 # the mascot's face centre
+def positions(cast: dict, scene: dict, who: tuple[str, ...]) -> dict:
+    """Where everyone is: her behind the desk (or at the school desk), the AIs on the desk in front of her (the
+    main one front left; in a group, three across), the explainer AI on its stack of books."""
+    if scene.get("set") == "classroom":
+        return {"a": CLASSROOM["person"], "b": CLASSROOM["mascot"]}
+    pos = {"a": OFFICE["person"], "b": OFFICE["mascot"]}
+    if len(who) > 2:
+        pos.update({s: OFFICE["group"][s] for s in who if s != "a"})
+    return pos
+
+
+MASCOT_FACE = 0.16      # the mascot's face centre above its feet
+
+
+def camera_key(shot: str, t: float, cast: dict, pos: dict | None = None, scene: dict | None = None) -> dict:
+    """A cut camera key for a shot of the vocabulary, framed from the set's layout."""
+    pos = pos or {"a": OFFICE["person"], "b": OFFICE["mascot"]}
     key = {"t": round(t, 3), "cut": True}
-    if shot == "two":
-        return {**key, "pos": [0.32, 1.12, 1.3], "look": [0.1, 0.98, -0.22], "fov": 36, "push": 0.03}
-    if shot in ("wide0", "wide1"):
-        w = {"wide0": {"pos": [0.4, 1.25, 1.8], "look": [0.1, 0.96, -0.25], "fov": 38},
-             "wide1": {"pos": [-0.42, 1.22, 1.8], "look": [0.08, 0.95, -0.2], "fov": 40}}[shot]
-        return {**key, **w, "push": 0.04}
-    who, kind = shot.split("_", 1)
-    if cast["b"]["kind"] != "mascot" and kind == "ots":
-        kind = "third"                                 # over-the-shoulder framings are laid out for the mascot
-    if kind == "cu":
-        return {**key, "shot": {"type": "closeup", "target": who, "side": 0.1 if who == "a" else 0.18}, "push": 0.06}
-    if kind == "third":
-        return {**key, "shot": {"type": "closeup", "target": who, "side": 0.3 if who == "a" else -0.22,
-                                "offset": 0.22 if who == "a" else -0.2}, "push": 0.04}
-    if who == "a":                                     # over the mascot's shoulder onto her: it soft in the corner
-        return {**key, "pos": [0.46, 0.93, 0.66], "look": [A[0] + 0.04, A[1] - 0.06, A[2]], "fov": 34, "push": 0.03}
-    # the mascot sits in front of her facing the camera, so "both in frame" for it is a low angle from the desk:
-    # the mascot big in the foreground, her soft behind and above
-    return {**key, "pos": [-0.06, 0.8, 0.95], "look": [0.22, 0.97, -0.05], "fov": 40, "push": 0.03}
+    A = _head(pos["a"], 1.17)                          # her head centre at rest
+    if shot == "board":
+        bx, by, bz = CLASSROOM["board_center"]
+        return {**key, "pos": [0.26, 1.42, 3.05], "look": [-0.05, 1.2, -1.0], "fov": 44, "push": 0.03,
+                "focus": [bx, by, bz], "aperture": 0.012}
+    if shot == "a_side":                               # her face in 3/4 profile, turned toward the board
+        f = CLASSROOM["person_facing"] + 0.6
+        return {**key, "pos": [round(A[0] + math.sin(f) * 1.85, 3), 1.16, round(A[2] + math.cos(f) * 1.85, 3)],
+                "look": [A[0], A[1] - 0.14, A[2]], "fov": 34, "push": 0.04}
+    if shot == "b_books":
+        return {**key, "shot": {"type": "closeup", "target": "b", "side": 0.25, "offset": 0.12}, "push": 0.05}
+    if shot in ("wide", "wide0", "wide1", "two"):
+        if len(pos) > 2:                               # a group: wide enough for every AI on the desk
+            return {**key, "pos": [A[0] + 0.11, 1.25, 3.0], "look": [A[0] + 0.12, 0.9, -0.3], "fov": 42, "push": 0.03}
+        return {**key, "pos": [A[0] - 0.06, 1.2, 2.35], "look": [A[0] - 0.05, 0.9, -0.3], "fov": 40, "push": 0.03}
+    if shot == "a_cu":
+        return {**key, "shot": {"type": "closeup", "target": "a", "side": 0.0, "zoom": 1.42}, "push": 0.05}
+    if shot == "a_third":
+        return {**key, "shot": {"type": "closeup", "target": "a", "side": 0.22, "offset": 0.2, "zoom": 1.38}, "push": 0.04}
+    if shot.startswith("m_"):
+        _, who, side = shot.split("_")
+        M = pos.get(who, OFFICE["mascot"])
+        F = [M[0], M[1] + MASCOT_FACE, M[2]]
+        # her torso lands behind the AI on one side: the camera sits low in front of the AI, swung a little
+        # sideways; the AI takes the opposite third
+        # the camera circles the AI to a side where her body falls behind it on the chosen side of the frame (she
+        # sits behind and to one side of it, so one variant is nearly frontal and the other comes from wide of
+        # her); the AI is turned to face each angle (`yaw`: a cheat on the cut) and sits in the opposite third
+        rel = math.atan2(A[0] - F[0], F[2] - A[2])        # where she is, seen from in front of the AI (+: to its right)
+        if rel >= 0:                                   # she is to its right: frontal (her right) or from its left (her left)
+            theta = 0.05 if side == "r" else -(rel + 0.5)
+        else:                                          # she is to its left (an AI right of her, near the monitor):
+            theta = -0.05 if side == "r" else -0.32    # two frontal angles, her on the left in both
+        dist, sgn = 0.95, (1 if side == "r" else -1)
+        cam = [F[0] + math.sin(theta) * dist, F[1] + 0.02, F[2] + math.cos(theta) * dist]
+        d = [-math.sin(theta), -math.cos(theta)]                 # the view direction (x, z)
+        right = [-d[1], d[0]]
+        look = [F[0] + d[0] * 0.3 + right[0] * 0.07 * sgn, F[1] + 0.09, F[2] + d[1] * 0.3 + right[1] * 0.07 * sgn]
+        return {**key, "pos": [round(v, 3) for v in cam], "look": [round(v, 3) for v in look], "fov": 38, "push": 0.04,
+                "focus": [round(v, 3) for v in (F[0], F[1], F[2] + 0.08)],
+                "_yaw": [who, round(theta, 3)]}
+    # plans saved by older versions
+    return {**key, "shot": {"type": "closeup", "target": shot.split("_")[0] if "_" in shot else "a", "side": 0.1}, "push": 0.05}
+
+
+def board_events(plan: list[dict], timing: dict | None, before: list[dict] | None = None) -> list[dict]:
+    """Whiteboard writes in time: earlier clips' items already up (t -1), this clip's items as their words are
+    spoken (at the `at` word when given, else spread over the line)."""
+    ev = [{"t": -1.0, **op} for op in (before or [])]
+    if not timing:
+        return ev
+    for p, t0, t1 in zip(plan, timing["starts"], timing["ends"]):
+        ops = p.get("board") or []
+        for j, op in enumerate(ops):
+            at = op.get("at")
+            frac = 0.15 + 0.7 * j / max(1, len(ops))
+            if at:
+                ws = [squash(w) for w in clean(p.get("text", "")).split()] if p.get("text") else []
+                if squash(at) in ws:
+                    frac = ws.index(squash(at)) / max(1, len(ws))
+            ev.append({"t": round(t0 + frac * max(0.1, t1 - t0), 3), "op": op["op"], "text": op.get("text", "")})
+    return ev
 
 
 def build_scene(plan: list[dict], timing: dict, cast: dict, mouths: dict, fps: int, width: int, height: int,
-                duration: float, seed: int, quality: str, theme: str = "dark", dof: float = 0.035, motion: str = "still") -> dict:
-    """A version 2 scene for one clip: the person behind the desk, the mascot on it, a hard cut per line.
+                duration: float, seed: int, quality: str, theme: str = "dark", dof: float = 0.035, motion: str = "still",
+                scene: dict | None = None, final: bool = False, board_before: list[dict] | None = None,
+                mascot_mouth: bool = False, prev_shot: str | None = None) -> dict:
+    """A version 2 scene for one clip: her behind the desk, the AIs on it (or the classroom whiteboard), a hard cut
+    about 0.15 s before each speaker's first word, her pose set per shot, the final clip's wide pulling back after
+    the last word.
     motion "still" (default): the characters do not move; only faces change (expressions, blinks, lip sync).
-    motion "lively": nods, hand beats, a hand to the cheek on questions, the mascot hops and turns."""
+    motion "lively": nods, hand beats, a hand to the cheek on questions, the mascots hop and turn."""
+    scene = scene or {"set": "office", "look": "night"}
+    classroom = scene.get("set") == "classroom"
     still = motion != "lively"
     idle = {"t": 0, "clip": "Idle", "speed": 0} if still else {"t": 0, "clip": "Idle"}
     starts, ends = timing["starts"], timing["ends"]
-    a, b = cast["a"], cast["b"]
-    actor = {
-        # hands rest on the desk from before the clip starts (t -1), so they never reach in at a clip's first frame
-        "a": {"id": "a", "kind": a["kind"], "appearance": a.get("appearance", {}), "position": OFFICE["person"], "still": still,
-              "anim": [idle], "face": [{"t": 0, "expr": "neutral"}], "gaze_max": 0.45,
-              "gestures": [{"t": -1, "gesture": "rest", "side": "both", "dur": duration + 2}], "look": [{"t": 0, "at": "b"}]},
-        "b": {"id": "b", "kind": b["kind"], "appearance": b.get("appearance", {}), "position": OFFICE["mascot"], "facing": -0.2,
-              "still": still, "face": [{"t": 0, "expr": "neutral"}], "gestures": [], "look": [{"t": 0, "at": "camera"}]},
-    }
-    if b["kind"] != "mascot":                       # a second person stands beside the desk instead
-        actor["b"]["position"] = [-0.85, 0, -0.3]       # the free side of the desk (the monitor is on the right)
-        actor["b"]["facing"] = 0.5
-        actor["b"]["anim"] = [idle]
-    cams = []
+    who = ("a", "b") if classroom else speakers(cast)      # every AI in the cast sits on the desk all along
+    pos = positions(cast, scene, who)
+    a = cast["a"]
+    actor = {"a": {"id": "a", "kind": a["kind"], "appearance": a.get("appearance", {}), "position": pos["a"], "still": still,
+                   "anim": [idle], "face": [{"t": 0, "expr": "neutral"}], "gaze_max": 0.45, "gestures": [],
+                   "look": [{"t": 0, "at": "b"}]}}
+    if classroom:
+        actor["a"]["facing"] = CLASSROOM["person_facing"]
+        actor["a"]["gaze_max"] = 0.7
+    for s in who[1:]:
+        c = cast[s]
+        ap = {**c.get("appearance", {}), "mouth": bool(mascot_mouth)}
+        actor[s] = {"id": s, "kind": c["kind"], "appearance": ap, "position": pos.get(s, OFFICE["mascot"]),
+                    "facing": 0.45 if classroom else 0.0, "still": still, "face": [{"t": 0, "expr": "neutral"}], "gestures": [],
+                    "look": [{"t": 0, "at": "camera"}]}
+        if c["kind"] != "mascot":                       # a second person stands beside the desk instead
+            actor[s]["position"] = [-0.85, 0, -0.3]
+            actor[s]["facing"] = 0.5
+            actor[s]["anim"] = [idle]
+    cams, cut_times = [], []
     for k, (p, t0, t1) in enumerate(zip(plan, starts, ends)):
         s = p["speaker"]
+        if s not in actor:
+            continue
         tm = p.get("timing", "normal")
         prev_end = ends[k - 1] if k else 0.0
         if not cams:
             cut_at = 0.0
-        elif tm == "beat":                             # cut to the responder as the other finishes: the look plays
-            cut_at = max(cams[-1]["t"] + 0.4, prev_end + 0.05)
-        elif tm == "quick":
-            cut_at = max(cams[-1]["t"] + 0.4, t0 - 0.04)
+        elif not p.get("cut", True):
+            cut_at = None                               # the same speaker goes on in the same shot
+        elif tm == "beat":                             # a reaction cut: the look plays before the answer
+            cut_at = max(cams[-1]["t"] + 0.4, min(prev_end + 0.33, t0 - CUT_LEAD))
         else:
-            cut_at = max(cams[-1]["t"] + 0.4, t0 - 0.12)
-        cut_at = min(cut_at, max(t0, cams[-1]["t"] + 0.4) if cams else 0.0)
-        cams.append(camera_key(p["shot"], cut_at, cast))
+            cut_at = max(cams[-1]["t"] + 0.4, t0 - CUT_LEAD)
+        if cut_at is not None:
+            cut_at = min(cut_at, max(t0, cams[-1]["t"] + 0.4) if cams else 0.0)
+            ck = camera_key(p["shot"], cut_at, cast, pos, scene)
+            yaw = ck.pop("_yaw", None)
+            if yaw and yaw[0] in actor:                 # the AI faces this camera from the cut on
+                actor[yaw[0]].setdefault("_yaws", []).append({"t": -1.0 if not cams else round(cut_at, 3), "yaw": yaw[1]})
+            elif cams and not classroom:                # other shots: the AIs face the front again
+                for s2 in who[1:]:
+                    if actor[s2].get("_yaws") and actor[s2]["_yaws"][-1]["yaw"] != 0.0:
+                        actor[s2]["_yaws"].append({"t": round(cut_at, 3), "yaw": 0.0})
+            cams.append(ck)
+            cut_times.append((cut_at, p))
         if tm == "beat":
             actor[s]["face"].append({"t": round(max(0.0, prev_end), 3), "expr": "skeptical"})   # the sharp look
         actor[s]["face"].append({"t": round(max(0.0, t0 - 0.08), 3), "expr": p["face"]})
-        actor[s]["face"].append({"t": round(t1 + 0.35, 3), "expr": "neutral"})
+        actor[s]["face"].append({"t": round(t1 + 0.35, 3), "expr": "neutral" if p["face"] not in ("content", "embarrassed") else p["face"]})
         if p.get("gesture") and not still:
             g = {"t": round(t0, 3), "gesture": p["gesture"], "dur": round(max(0.8, t1 - t0 + 0.4), 3)}
             if p["gesture"] == "think":
                 g["side"] = "R"
             actor[s]["gestures"].append(g)
-        # gaze: the person watches the mascot; in lively motion the mascot turns to her while she talks and is back
-        # facing the camera before its own shot cuts in (so the turn never happens on screen)
-        if still:
-            pass
-        elif s == "a" and b["kind"] == "mascot":
+        # she glances at whichever AI is talking (the main one otherwise); she never turns on her own shot
+        if s != "a" and len(who) > 2:
+            actor["a"]["look"].append({"t": round(max(0.0, (cut_at if cut_at is not None else t0) + 0.02), 3), "at": s})
+        if not still and s == "a" and cast["b"]["kind"] == "mascot":
             actor["b"]["look"].append({"t": round(t0 + 0.2, 3), "at": "a"})
-        else:
-            actor["b"]["look"].append({"t": round(max(0.0, cut_at - 0.45), 3), "at": "camera"})
-    for s in SPEAKERS:
+        elif not still and s != "a":
+            actor["b"]["look"].append({"t": round(max(0.0, (cut_at or t0) - 0.45), 3), "at": "camera"})
+    # her pose: set on each cut, held until the next one (a pose never changes on screen)
+    spans = []
+    for t, p in cut_times or [(0.0, plan[0] if plan else {"pose": "rest"})]:
+        if not spans or (spans[-1][1].get("pose") or "rest") != (p.get("pose") or "rest"):   # one span per pose
+            spans.append((t, p))
+    for j, (t, p) in enumerate(spans):
+        t_next = spans[j + 1][0] if j + 1 < len(spans) else duration + 1
+        pose = p.get("pose", "rest") or "rest"
+        start = -1.0 if j == 0 else t
+        actor["a"]["gestures"].append({"t": round(start, 3), "gesture": pose, "snap": True, "dur": round(t_next - start, 3),
+                                       **({"side": "R"} if pose in ("temple", "palm", "finger") else {})})
+    # the final clip: the last shot (a wide) holds through the last line, then keeps pulling back
+    if final and cams and ends and "pos" in cams[-1]:
+        last = cams[-1]
+        t_hold = round(max(last["t"] + 0.1, ends[-1]), 3)
+        back = [round(v + d, 3) for v, d in zip(last["pos"], (0.0, 0.07, 0.5))]
+        cams[-1] = {**last, "push": 0}
+        cams.append({"t": t_hold, "pos": last["pos"], "look": last["look"], "fov": last["fov"]})
+        cams.append({"t": round(duration, 3), "pos": back, "look": last["look"], "fov": last["fov"] + 2, "ease": "inOutSine"})
+    for s in actor:
+        yaws = actor[s].pop("_yaws", None)
+        if yaws:
+            actor[s]["facing"] = ([{"t": -1.0, "yaw": actor[s].get("facing", 0.0)}] if yaws[0]["t"] > -1 else []) + yaws
         for key in ("face", "look", "gestures"):
             actor[s][key] = sorted(actor[s][key], key=lambda k: k["t"])
-        if mouths.get(s):
+        if mouths.get(s) and (s == "a" or mascot_mouth or cast[s]["kind"] != "mascot"):
             actor[s]["mouth"] = {"fps": fps, "values": mouths[s]}
-    return {"version": 2, "width": width, "height": height, "fps": fps, "duration": duration, "style": "night", "theme": theme,
-            "mood": [{"t": 0, "mood": "neutral"}], "seed": seed, "quality": quality, "handheld": 0.003,
-            "dof": {"aperture": dof, "maxblur": 0.03}, "actors": [actor["a"], actor["b"]], "props": [],
-            "camera": cams or [camera_key("a_cu", 0.0, cast)],
-            "transition": {"in": "none", "out": "none"}, "_planned_by": "dialogue"}
+    out = {"version": 2, "width": width, "height": height, "fps": fps, "duration": duration, "style": "night", "theme": theme,
+           "set": scene.get("set", "office"), "look": scene.get("look", "night"),
+           "layout": {"desk_mug": scene.get("desk_mug", not any(p.get("pose") == "mug" for p in plan))},
+           "mood": [{"t": 0, "mood": "neutral"}], "seed": seed, "quality": quality, "handheld": 0.0,
+           "dof": {"aperture": dof, "maxblur": 0.05}, "actors": list(actor.values()), "props": [],
+           "camera": cams or [camera_key("a_cu", 0.0, cast, pos, scene)],
+           "transition": {"in": "none", "out": "none"}, "_planned_by": "dialogue"}
+    if classroom:
+        out["board"] = {"events": board_events(plan, timing, board_before)}
+    return out
 
 
 def speaker_mouths(envelope: list[float], plan: list[dict], timing: dict, fps: int) -> dict:
     """Split the clip's voice loudness per speaker (each mouth moves only while its own lines play)."""
-    out = {s: [0.0] * len(envelope) for s in SPEAKERS}
+    out = {s: [0.0] * len(envelope) for s in ALL_SPEAKERS}
     for p, t0, t1 in zip(plan, timing["starts"], timing["ends"]):
         for f in range(max(0, int(t0 * fps)), min(len(envelope), int(t1 * fps) + 2)):
             out[p["speaker"]][f] = envelope[f]
@@ -533,9 +760,10 @@ def caption_lines(clips_meta: list[dict], clip_lines: list[list[dict]], starts: 
             d = span * n / sum(w)
             out.append({**ln, "text": clean(ln["text"]), "start": round(t, 3), "end": round(t + d * 0.9, 3)})
             t += d
-    # never overlap: a line ends before the next one starts
+    # a caption stays up through the pause until the next line replaces it (never overlapping it); a long silence
+    # (over 1.5 s) clears it
     for x, y in zip(out, out[1:]):
-        x["end"] = round(min(x["end"] + 0.25, y["start"] - 0.02), 3)
+        x["end"] = round(y["start"] - 0.02 if y["start"] - x["end"] <= 1.5 else x["end"] + 0.25, 3)
     if out:
         out[-1]["end"] = round(out[-1]["end"] + 0.25, 3)
     return out

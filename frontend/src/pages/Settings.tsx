@@ -122,7 +122,7 @@ export default function Settings() {
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm">Voiceover for local video<select className="input" value={s.voice.tts} onChange={(e) => set(["voice", "tts"], e.target.value)} data-testid="tts-engine">
             <option value="auto">auto (Kokoro, then Piper)</option><option value="kokoro">Kokoro-82M</option><option value="piper">Piper</option><option value="elevenlabs">ElevenLabs (cloud, paid per character)</option><option value="groq">Groq (cloud, GROQ_API_KEY)</option><option value="none">none (silent clips)</option></select></label>
-          <label className="text-sm">Kokoro voice (male / female / mascot)<span className="flex gap-1"><input className="input" value={s.voice.kokoro_voice_male} onChange={(e) => set(["voice", "kokoro_voice_male"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_female} onChange={(e) => set(["voice", "kokoro_voice_female"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_mascot} onChange={(e) => set(["voice", "kokoro_voice_mascot"], e.target.value)} title="the mascot in dialogue shorts" /></span></label>
+          <label className="text-sm">Kokoro voice (male / female / AI / AI 2 / AI 3)<span className="flex gap-1"><input className="input" value={s.voice.kokoro_voice_male} onChange={(e) => set(["voice", "kokoro_voice_male"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_female} onChange={(e) => set(["voice", "kokoro_voice_female"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_mascot} onChange={(e) => set(["voice", "kokoro_voice_mascot"], e.target.value)} title="the main AI in dialogue shorts" /><input className="input" value={s.voice.kokoro_voice_mascot2 ?? ""} onChange={(e) => set(["voice", "kokoro_voice_mascot2"], e.target.value)} title="mascot2: a deep, terse AI (group dialogue shorts)" /><input className="input" value={s.voice.kokoro_voice_mascot3 ?? ""} onChange={(e) => set(["voice", "kokoro_voice_mascot3"], e.target.value)} title="mascot3: a bright, quick AI (group dialogue shorts)" /></span></label>
           <label className="text-sm">Piper voice model (.onnx path)<input className="input" value={s.voice.piper_model} onChange={(e) => set(["voice", "piper_model"], e.target.value)} /></label>
           <label className="text-sm">Caption timing<select className="input" value={s.captions.engine ?? "local"} onChange={(e) => set(["captions", "engine"], e.target.value)} data-testid="caption-engine">
             <option value="local">faster-whisper on this machine</option><option value="groq">Groq Whisper (cloud, GROQ_API_KEY)</option></select></label>
@@ -147,8 +147,12 @@ export default function Settings() {
       </Section>
       <Section title="Dialogue shorts">
         <div className="grid gap-3 md:grid-cols-4" data-testid="dialogue-settings">
-          <label className="text-sm">Sound bed<input className="input" list="bed-opts" value={s.dialogue.bed} onChange={(e) => set(["dialogue", "bed"], e.target.value)} title="room = generated room tone with a faint pad; none; or a path to your own audio file (looped)" />
-            <datalist id="bed-opts"><option value="room" /><option value="none" /></datalist></label>
+          <label className="text-sm">Set<select className="input" value={s.dialogue.set ?? "auto"} onChange={(e) => set(["dialogue", "set"], e.target.value)} data-testid="dialogue-set">
+            <option value="auto">Auto: the script picks</option><option value="office">Office desk</option><option value="classroom">Classroom whiteboard (explainers)</option></select></label>
+          <label className="text-sm">Window look<select className="input" value={s.dialogue.look ?? "auto"} onChange={(e) => set(["dialogue", "look"], e.target.value)} data-testid="dialogue-look">
+            <option value="auto">Auto: the script picks</option><option value="morning">Morning</option><option value="rain">Rainy night</option><option value="night">Late night (city lights)</option><option value="dusk">Dusk</option></select></label>
+          <label className="text-sm">Sound bed<input className="input" list="bed-opts" value={s.dialogue.bed} onChange={(e) => set(["dialogue", "bed"], e.target.value)} title="auto = follows the window (rain, city at night, room by day); room, rain, city; none; or a path to your own audio file (looped)" />
+            <datalist id="bed-opts"><option value="auto" /><option value="room" /><option value="rain" /><option value="city" /><option value="none" /></datalist></label>
           <label className="text-sm">Bed level (dB under the voices)<input className="input" type="number" min={-60} max={-6} step={1} value={s.dialogue.bed_db} onChange={(e) => set(["dialogue", "bed_db"], Number(e.target.value))} /></label>
           <label className="text-sm">Mascot pitch (1.0 = as spoken)<input className="input" type="number" min={0.7} max={1.5} step={0.02} value={s.dialogue.mascot_pitch} onChange={(e) => set(["dialogue", "mascot_pitch"], Number(e.target.value))} /></label>
           <label className="text-sm">Character motion<select className="input" value={s.dialogue.motion ?? "still"} onChange={(e) => set(["dialogue", "motion"], e.target.value)} data-testid="dialogue-motion">
@@ -157,7 +161,12 @@ export default function Settings() {
             <option value="eleven_v4">Eleven v4 (best: performs the script's [tags])</option><option value="eleven_v3">Eleven v3</option></select></label>
           <label className="text-sm">Voice expressiveness (ElevenLabs stability: lower = more emotional)<input className="input" type="number" min={0} max={1} step={0.05} value={s.dialogue.elevenlabs_stability ?? 0.3} onChange={(e) => set(["dialogue", "elevenlabs_stability"], Number(e.target.value))} /></label>
           <label className="text-sm">Close-up background blur<input className="input" type="number" min={0} max={0.08} step={0.005} value={s.dialogue.dof} onChange={(e) => set(["dialogue", "dof"], Number(e.target.value))} /></label>
-          <p className="text-xs text-ink-3 md:col-span-4">Mascot voice per engine: Kokoro above; ElevenLabs/Groq use their "mascot" voice when set, else the male voice. The bed dips while anyone speaks.</p>
+          <label className="text-sm">Frame rate<select className="input" value={s.dialogue.fps ?? 30} onChange={(e) => set(["dialogue", "fps"], Number(e.target.value))}>
+            <option value={30}>30 fps (like the reference reels)</option><option value={25}>25 fps</option><option value={24}>24 fps</option></select></label>
+          <label className="text-sm">Loudness (LUFS)<input className="input" type="number" min={-24} max={-9} step={0.5} value={s.dialogue.lufs ?? -15} onChange={(e) => set(["dialogue", "lufs"], Number(e.target.value))} /></label>
+          <label className="text-sm">Pull-back after the last line (s)<input className="input" type="number" min={0} max={4} step={0.1} value={s.dialogue.end_hold ?? 1.7} onChange={(e) => set(["dialogue", "end_hold"], Number(e.target.value))} /></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!s.dialogue.mascot_mouth} onChange={(e) => set(["dialogue", "mascot_mouth"], e.target.checked)} data-testid="dialogue-mouth" />Give the AIs a talking mouth (off = they act with their eyes, like the reference style)</label>
+          <p className="text-xs text-ink-3 md:col-span-4">AI voices per engine: Kokoro above (mascot, mascot2 for a deep terse AI, mascot3 for a bright quick one); ElevenLabs/Groq use their "mascot" voices when set in settings.json, else the male voice. The bed dips a little while anyone speaks.</p>
         </div>
       </Section>
       <LocalServices />
@@ -211,6 +220,7 @@ function ElevenLabsVoice({ s, set }: { s: any; set: (path: string[], v: any) => 
   return (
     <div className="grid gap-3 rounded-lg border border-line p-3 md:col-span-3 md:grid-cols-3" data-testid="elevenlabs-settings">
       <label className="text-sm">ElevenLabs voice (male / female)<span className="flex gap-1">{field("elevenlabs_voice_male")}{field("elevenlabs_voice_female")}</span></label>
+      <label className="text-sm md:col-span-2">Dialogue AI voices (main / deep, terse / bright, quick; empty = the male voice)<span className="flex gap-1">{field("elevenlabs_voice_mascot")}{field("elevenlabs_voice_mascot2")}{field("elevenlabs_voice_mascot3")}</span></label>
       <label className="text-sm">Model<select className="input" value={s.voice.elevenlabs_model} onChange={(e) => set(["voice", "elevenlabs_model"], e.target.value)}>
         {[["eleven_v4", "Eleven v4 (best: emotion, performs [audio tags])"], ["eleven_multilingual_v2", "Multilingual v2"], ["eleven_turbo_v2_5", "Turbo v2.5 (faster, cheaper)"], ["eleven_flash_v2_5", "Flash v2.5 (fastest, cheapest)"], ["eleven_v3", "v3 (expressive, older)"]]
           .map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>

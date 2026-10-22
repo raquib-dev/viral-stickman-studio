@@ -169,24 +169,33 @@ def final_qa(video: Path, fps: float, clip_starts: list[float], caption_events: 
 # ---- sound bed (dialogue shorts) ------------------------------------------------------------------
 
 def add_bed(video: Path, out: Path, bed: str = "room", level_db: float = -30.0) -> Path:
-    """Mix a quiet bed under the video's voices, ducked while anyone speaks. bed = "room" (generated room tone with
-    a faint low pad, nothing to license) or a path to your own music/ambience file (looped)."""
+    """Mix a quiet ambience bed under the video's voices, dipping a little while anyone speaks. bed = "room"
+    (generated room tone), "rain" (rain on a window), "city" (a city at night), or a path to your own
+    music/ambience file (looped). The generated beds are filtered noise: no tones, no music, nothing to license."""
     dur = probe(video)["duration"]
+    noise = lambda color, amp: ["-f", "lavfi", "-i", f"anoisesrc=color={color}:amplitude={amp}:sample_rate=48000:duration={dur:.3f}"]
     if bed == "room":
-        src = ["-f", "lavfi", "-i", f"anoisesrc=color=brown:amplitude=0.6:sample_rate=48000:duration={dur:.3f}",
-               "-f", "lavfi", "-i", f"sine=frequency=110:sample_rate=48000:duration={dur:.3f}",
-               "-f", "lavfi", "-i", f"sine=frequency=164.81:sample_rate=48000:duration={dur:.3f}"]
-        make = ("[1:a]lowpass=f=300,highpass=f=45[n];[2:a]volume=0.18,tremolo=f=0.17:d=0.5[p1];"
-                "[3:a]volume=0.12,tremolo=f=0.11:d=0.5[p2];[n][p1][p2]amix=inputs=3,volume=3,lowpass=f=900[bedsrc];")
+        src = noise("brown", 0.6) + noise("pink", 0.08)
+        make = "[1:a]lowpass=f=300,highpass=f=45[n1];[2:a]highpass=f=900,lowpass=f=5000,volume=0.5[n2];[n1][n2]amix=inputs=2,volume=2.4[bedsrc];"
+    elif bed == "rain":
+        # the patter (bright, softly fluttering pink noise) over a low rumble of the storm
+        src = noise("pink", 0.5) + noise("brown", 0.5)
+        make = ("[1:a]highpass=f=500,lowpass=f=7500,tremolo=f=7:d=0.18,volume=0.8[n1];"
+                "[2:a]lowpass=f=220,highpass=f=35[n2];[n1][n2]amix=inputs=2,volume=2.4[bedsrc];")
+    elif bed == "city":
+        # distant traffic: a low, slowly breathing rumble with a faint airy hiss
+        src = noise("brown", 0.7) + noise("pink", 0.06)
+        make = ("[1:a]lowpass=f=420,highpass=f=40,tremolo=f=0.13:d=0.35[n1];"
+                "[2:a]highpass=f=1500,lowpass=f=6000[n2];[n1][n2]amix=inputs=2,volume=2.4[bedsrc];")
     else:
         if not Path(bed).exists():
             raise FileNotFoundError(f"sound bed file not found: {bed}")
         src = ["-stream_loop", "-1", "-i", str(bed)]
         make = "[1:a]anull[bedsrc];"
     graph = (make + f"[bedsrc]aresample=48000,aformat=channel_layouts=stereo,volume={level_db}dB,"
-             f"afade=t=in:d=0.6,afade=t=out:st={max(0.0, dur - 0.8):.3f}:d=0.8[bed];"
+             f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, dur - 1.5):.3f}:d=1.5[bed];"
              "[0:a]aresample=48000,aformat=channel_layouts=stereo,asplit=2[v1][v2];"
-             "[bed][v2]sidechaincompress=threshold=0.02:ratio=6:attack=20:release=450[duck];")
+             "[bed][v2]sidechaincompress=threshold=0.02:ratio=3:attack=20:release=450[duck];")
     # amix scales each input by 1/n; the volume after it restores the levels (works on every ffmpeg version)
     run_ffmpeg(["-i", str(video), *src, "-filter_complex", graph + "[v1][duck]amix=inputs=2:duration=first,volume=2[a]",
                 "-map", "0:v", "-map", "[a]", "-t", f"{dur:.3f}", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(out)], timeout=LONG)

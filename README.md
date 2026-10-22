@@ -265,70 +265,127 @@ walking in, a second character, props and where they go, badges, note/code panel
 fades); a JSON tab; **Check** (shows what would be repaired), **Preview frame** at any moment (a real render,
 seconds on your GPU), **Save** and **Save & re-render clip**. Saved edits are yours: the AI planner keeps them.
 
-### Dialogue shorts (two characters, 3D, a cut per line)
+### Dialogue shorts (a person and her AIs, 3D, a cut per line)
 
-A second video format next to the narrated stickman: a person and a mascot trade short, deadpan lines at a
-late-night desk, cut on every line, with line captions at the top and a quiet room-tone bed (the style of
-"she said no sixty-one times" shorts). Everything runs on this machine with **local-threejs**.
+A second video format next to the narrated stickman: a person and her AI (a small creature on the desk) trade
+short, deadpan lines, cut on every line, with line captions at the top and an ambience bed under the voices.
+The style, timing and shots are modelled on a shot-by-shot study of seven reference reels (the
+`dialogue-shorts-director` skill in `.claude/skills/` has the full breakdown and the measured numbers).
+Everything renders on this machine with **local-threejs**.
 
 **After pulling this branch:** `cd renderer; npm run build; cd ..; cd frontend; npm run build; cd ..`, restart.
 
-**Make one:** New project → **Video format: Dialogue short** → give the two characters names → create. Then
+**Make one:** New project → **Video format: Dialogue short** → give the characters names → create. Then
 Settings → Render → Backend **local-threejs**, and run the pipeline as usual (topics → hooks → script → … →
 stitch). Differences from the narrated format:
 
-- **Hooks:** the SAY line is the first line one character says to the other, written as a performance:
-  `[exasperated] Claaauude!! The client said it's GREAT.` (scored on its plain words).
-- **Script:** speaker-tagged lines written to the format's rules, then checked (see below) and revised up to
-  3 times; lines are grouped into the 10 s clips without ever splitting one. Studio shows them per clip with
-  the turn, the callback and the button marked.
+- **Hooks:** the SAY line is the first line, the person to her AI, written as a performance:
+  `[exasperated] Claaauude. The client said it's GREAT.` (scored on its plain words).
+- **Script:** the writer picks one of five premise types:
+  - a tender quirk;
+  - explain like I'm five (the whiteboard);
+  - a team of AIs;
+  - something the AI can't do;
+  - credit and work.
+
+  It writes speaker-tagged lines to the format's rules (below). Each line has its acting, its timing and,
+  optionally, her pose and whiteboard items. It also picks the **scene**: the set and the look outside the
+  window. Lines are checked, revised up to 3 times, and grouped into clips of up to 10 s (a line is never
+  split). Studio shows them per clip.
 - **Direction A/B:** not needed (no Omni prompts); they finish instantly.
-- **Script delivery:** every line carries its acting for ElevenLabs Eleven v4: audio tags (`[deadpan]`,
-  `[sighs]`, `[excited]`, `[whispers]`...), stretched words ("Claaauude!!"), CAPS on the word that lands, and a
-  timing: **quick** (answers straight back), **normal**, or **beat** (a sharp look first, then the answer). Tags
-  never show in captions, and engines that cannot perform them (Kokoro, Piper, Groq, older ElevenLabs models) get
-  the plain words. Studio shows the tags in grey and the timing per line.
-- **3D plan (direction):** one shot per line, free and instant, from a vocabulary: the speaker's centred
-  close-up, an off-centre close-up (rule of thirds), a shot with both characters (over the mascot's shoulder
-  onto her; a low angle on the mascot with her behind), a medium two-shot and two wides. Rules: open in the
-  speaker's face; a beat cuts to the responder early so the sharp look plays; quick answers keep both in frame;
-  the same person twice gets a new angle; both characters at least every 5 lines; never the same framing twice
-  in a row; the ending plays two-shot then wide. Faces come from the tags and the words.
-- **Render:** each line in its speaker's voice, laid out in the clip from the real voice lengths with the
-  script's timing (quick 0.06 s, normal 0.2 s, beat 0.75 s; sped up a little only if needed). A clip ends
-  when its last line does (plus 0.3 s), up to 10 s, so there is no dead air between clips and the finished video
-  runs as long as the conversation (a "60 s" short can come out a little shorter). Lip
-  sync per speaker (the mascot has a small mouth too), hard cuts. By default the
-  characters keep still and only their faces move: expressions, blinks and the talking mouth. Settings →
-  Dialogue shorts → **Character motion → Lively** adds nods, hand beats, a hand to the cheek on questions and
-  the mascot's hops.
-- **Stitch:** whole-line captions at the top timed from the render (no transcription needed), the sound bed
-  dipping under the voices, loudness, `final/qa.json`.
+- **Script delivery:** every line carries its acting for ElevenLabs Eleven v4:
+  - audio tags (`[deadpan]`, `[sighs]`, `[tender]`, `[hesitant]`, `[cheerfully]`...);
+  - stretched words ("Claaauude.");
+  - CAPS on the word that lands;
+  - a leading "..." for a hesitation (kept in the captions);
+  - a timing: **quick**, **normal** or **beat**.
 
-**The writing rules** (`backend/app/dialogue.py`, also given to the writing model): lines of 2-7 words (max
-9); nobody speaks more than 3 lines in a row and each character has at least 30%; 2-4 pause beats ("...");
-at least 2 oddly specific in-story numbers ("sixty-one times", "1 AM"), never facts about the world (no
-percentages, studies, surveys; they are flagged); a callback that repeats an earlier phrase 3+ lines later; a
-turn in the second half; an ending that loops back to the opening; line 1 is the approved hook; a lowercase
-title that quotes the script and ends with a question to the viewer.
+  Tags never show in captions. Engines that cannot perform them (Kokoro, Piper, Groq, older ElevenLabs models)
+  get the plain words.
+- **Scene.** Two sets:
+  - the **office desk**, with four looks outside the window: **morning**, **rainy night**, **late night** with
+    city bokeh, and **dusk**;
+  - the **classroom whiteboard** for explainers. The AI stands on a stack of books holding a pointer. The board
+    fills in as the words are spoken: a title, jargon words she strikes out in red, stick figures and boxes
+    joined by arrows, and "= meaning" labels.
 
-**Cast** (Render page → Cast): names and roles (the roles steer the writing), voices, and looks. The person:
-hair style and colour, skin, jacket and shirt colours, glasses, headphones, and a **face variant** number (any
-number other than 0 nudges eye spacing, jaw and head shape slightly: the same person, a little different, per
-series or per video). The mascot: shape (flower, star, blob, bean) and colour. **Preview cast** renders them
-at the desk. Changing a look or voice re-renders only the clips it affects.
+  Settings → Dialogue shorts → **Set** / **Window look** force one; "auto" uses the script's choice.
+- **3D plan (direction):** one shot per line, free and instant.
+  - Her medium close-up: centred, or off-centre now and then.
+  - Each AI at desk height with her body soft and blurred behind it, alternating sides. The AI is turned to
+    face each new angle on the cut.
+  - A frontal wide at least every 10 lines. The opening is a wide when three or more characters talk, and the
+    last line is always a wide.
+  - When the same person goes on, the shot holds with no cut.
+
+  In the classroom: the board shot, her in profile, and the AI on its books. Faces come from the tags and the
+  words. The AIs act with their eyes, which go small and square when caught out. She gets a closed-eye smile on
+  tender lines, and worried brows with a blush when embarrassed.
+- **Her pose** changes only on cuts and holds until the next change: hands on the desk, a mug in both hands,
+  reading a phone, arms crossed, a hand at her temple, an open palm, both hands forward, a finger raised. The
+  script sets it; mornings default to the mug.
+- **Render:** each line in its speaker's voice, laid out from the real voice lengths with the measured
+  reference timing:
+  - the first word at 0.37 s;
+  - a normal turn 0.45 s, a quick comeback 0.2 s, a beat 0.9 s;
+  - each hard cut lands 0.15 s before the next speaker's first word;
+  - every shot pushes in slowly.
+
+  A clip ends when its last line does, so the video runs as long as the conversation (a "60 s" short can
+  come out shorter). The last line plays on the wide, and the camera keeps pulling back for 1.7 s after
+  it. Dialogue clips render at **30 fps**. By default the characters keep still and only faces move.
+  Settings → Dialogue shorts → **Character motion → Lively** adds nods, hand beats and hops.
+- **Stitch:**
+  - whole-line captions in a dark translucent box at about 11 % from the top, staying up until the next line
+    replaces them;
+  - an **ambience bed** that follows the window (rain, a city at night, room tone by day; no music);
+  - loudness at **-15 LUFS** (like the references);
+  - `final/qa.json`.
+
+**The writing rules** (`backend/app/dialogue.py`, also given to the writing model):
+- lines of 2-6 words (max 9; a whiteboard explanation line max 16), with at least 2 one- or two-word punches;
+- nobody speaks more than 3 lines in a row. With two characters each has at least 30% of the lines; in a group
+  she has 25% and each AI at least 8%;
+- 1-4 beats; at least 2 oddly specific in-story numbers ("sixty-one times", "1 AM"), never facts about the
+  world (no percentages, studies or surveys; they are flagged);
+- a callback, a turn in the second half, and an ending that loops back;
+- line 1 is the approved hook;
+- a lowercase title (two mirrored sentences, then a question to the viewer);
+- classroom scripts need a board title and at least 4 board items.
+
+**Cast** (Render page → Cast): names and roles (the roles steer the writing), voices, and looks.
+- The person: hair style and colour, skin, jacket and shirt colours, glasses, headphones, and a **face
+  variant**.
+- The main AI: shape (flower, star, blob, bean, cube, cloud) and colour.
+- **Extra AIs for group episodes:** switch on character **c** and/or **d**. The defaults are a terse
+  blue-purple cloud with a `>_` face that answers "Done." and an eager dark cube with glowing eyes. Each has
+  its own name, role, voice, shape, colours and voice pitch.
+
+**Preview cast** renders them at the desk. Changing a look, voice or scene re-renders only the clips it
+affects.
 
 **Voices with ElevenLabs:** Settings → Voice → ElevenLabs. Dialogue lines always use **Eleven v4** (the top
 model, the one that performs the tags) with a drama preset (stability 0.3; Settings → Dialogue shorts → Voice
-expressiveness: lower is more emotional), whatever model your narrated videos use.
+expressiveness: lower is more emotional). Set the AI voices under **Dialogue AI voices**:
+- **main**;
+- **deep, terse** (mascot2);
+- **bright, quick** (mascot3).
 
-**Voices:** the person uses the "female" or "male" voice, the mascot the "mascot" voice: Kokoro `am_puck` by
-default (Settings → Voice), ElevenLabs/Groq use their mascot voice when set, else the male one. Settings →
-Dialogue shorts → **Mascot pitch** lifts it (1.10-1.20 makes a clearly separate character), **Sound bed**
-(`room`, `none`, or the path of your own audio file, looped), **Bed level**, **Close-up background blur**.
+Empty means the male voice. Kokoro defaults to `am_puck`, `am_onyx` and `am_echo`.
 
-Note: the default mascot is orange, a flower shape, and named Claude, like the reference video. For a channel,
-use your own mascot design and name: a well-known product's logo, colours or name belong to its owner.
+**More settings** (Settings → Dialogue shorts):
+- **Mascot pitch** for the main AI;
+- **Sound bed**: `auto`, `room`, `rain`, `city`, `none`, or the path of your own audio file;
+- **Bed level**;
+- **Close-up background blur**;
+- **Frame rate**;
+- **Loudness**;
+- **Pull-back after the last line**;
+- **Give the AIs a talking mouth**. Off by default, as in the reference style; on gives each AI a small mouth
+  that opens with its voice.
+
+Note: the default AIs are named Claude, Codex and Cursor, like the references. For a channel, use your own
+mascot designs and names: a well-known product's logo, colours or name belong to its owner.
 
 ### Animation pack (included: more human movement)
 

@@ -22,9 +22,17 @@ export const EXPRESSIONS = {
   confused: { browY: 0.03, browTilt: 0, browAsym: 0.55, eye: 1, smile: -0.2, open: 0, lookX: 0.25, lookY: 0, tilt: 0.16 },
   thinking: { browY: 0.03, browTilt: 0.2, browAsym: 0.3, eye: 0.94, smile: 0, open: 0, lookX: 0.3, lookY: 0.35, tilt: 0.12 },
   skeptical: { browY: 0, browTilt: -0.15, browAsym: 0.65, eye: 0.8, smile: -0.1, open: 0, lookX: -0.15, lookY: 0, tilt: -0.1 },
+  // eyes closed in a soft smile (a tender line); worried brows with a blush (a self-own)
+  content: { browY: 0.03, browTilt: 0.15, browAsym: 0, eye: 0.1, smile: 0.55, open: 0, lookX: 0, lookY: 0, tilt: 0.06 },
+  embarrassed: { browY: 0.05, browTilt: 0.5, browAsym: 0, eye: 0.92, smile: -0.15, open: 0, lookX: -0.2, lookY: 0.15, blush: 1 },
+  worried: { browY: 0.04, browTilt: 0.45, browAsym: 0, eye: 1, smile: -0.2, open: 0, lookX: 0, lookY: 0 },
+  caught: { browY: 0.06, browTilt: 0.2, browAsym: 0, eye: 0.9, smile: -0.1, open: 0, lookX: 0.15, lookY: 0 },   // the mascots' small square eyes
 };
 
-export const GESTURES = ["point", "present", "think", "facepalm", "hips", "crossed", "shrug", "cheer", "hold", "explain", "rest"];
+export const GESTURES = ["point", "present", "think", "facepalm", "hips", "crossed", "shrug", "cheer", "hold", "explain", "rest",
+  "mug", "phone", "temple", "palm", "both", "finger"];
+// poses that hold something: the item shows in the hands while the pose is on
+const HELD = { mug: "mug", phone: "phone" };
 export const HATS = ["none", "cap", "tophat", "crown", "helmet", "headband", "beanie"];
 export const LOOKS = ["camera", "left", "right", "up", "down"];
 export const HAIR_STYLES = ["long", "bob", "short", "ponytail", "bun", "none"];
@@ -453,6 +461,17 @@ export class Stickman {
     this.mouthY = r * F.mouth_y;
     this.mouthLift = r * 0.03;   // the tapered jaw curves away: keep the closed-mouth line on the surface
     this.head.add(this.mouthSmile, this.mouthOpen);
+    // cheeks that blush (embarrassed): soft pink discs, invisible until an expression asks for them
+    const blushMat = new THREE.MeshBasicMaterial({ color: "#ff6f7d", transparent: true, opacity: 0, depthWrite: false });
+    this.blushes = [-1, 1].map((sx) => {
+      const x = sx * r * F.eye_spacing * 1.15, y = r * (F.eye_y - 0.24);
+      const m = new THREE.Mesh(new THREE.CircleGeometry(r * 0.11, 16), blushMat);
+      m.position.set(x, y, onSkin(x, y) + r * 0.004);
+      m.lookAt(new THREE.Vector3(x * 2.2, y * 1.3, onSkin(x, y) * 3));
+      m.scale.set(1.3, 0.8, 1);
+      this.head.add(m);
+      return m;
+    });
     this._hair(ap, F, M.hair);
     if (ap.glasses && ap.glasses !== "none") this._glasses(ap.glasses, F, M.dark);
     if (ap.headphones) this._headphones(F, M.phones);
@@ -585,6 +604,15 @@ export class Stickman {
       case "present": return [chest.clone().add(V(side * 0.5, -0.12, 0.36)), V(side * 0.3, -1, -0.3)];
       case "hold": return [chest.clone().add(V(side * 0.13, -0.24, 0.3)), V(side, -1, 0)];
       case "rest": return [chest.clone().add(V(side * 0.17, -0.3, 0.36)), V(side, -0.6, -0.4)];
+      // dialogue poses (held for a whole shot): both hands round a mug, a phone held up to read, a hand at the
+      // temple, an open palm toward the other character, both hands forward ("both of you"), a finger raised
+      case "mug": return [chest.clone().add(V(side * 0.075, -0.19, 0.34)), V(side, -0.8, -0.2)];
+      case "phone": return side < 0 ? [chest.clone().add(V(-0.03, -0.12, 0.36)), V(-1, -0.8, -0.2)]
+        : [chest.clone().add(V(0.06, -0.24, 0.31)), V(1, -0.8, -0.2)];
+      case "temple": return [headC.clone().add(new THREE.Vector3(side * this.P.headR * 0.95, -this.P.headR * 0.05, this.P.headR * 0.2)), V(side, -0.4, 0.1)];
+      case "palm": return [chest.clone().add(V(side * 0.34, -0.17, 0.4)), V(side * 0.4, -1, -0.3)];
+      case "both": return [chest.clone().add(V(side * 0.15, -0.17, 0.42)), V(side, -0.8, -0.2)];
+      case "finger": return [chest.clone().add(V(side * 0.16, 0.04, 0.3)), V(side, -1, 0)];
       case "explain": {
         const w = Math.sin(t * 3.1 + side) * 0.06;
         return [chest.clone().add(V(side * 0.3, -0.22 + w, 0.3)), V(side, -1, -0.2)];
@@ -732,7 +760,8 @@ export class Stickman {
       const dur = g.dur ?? 1.8;
       if (t < g.t - 0.05 || t > g.t + dur + 0.4) continue;
       const tgt = g.target && ctx.resolve ? ctx.resolve(g.target, this.group) : null;
-      for (const sd of this._sides(g, tgt)) busy[sd] = Math.max(busy[sd], clamp((t - g.t) / 0.4) * clamp((g.t + dur + 0.4 - t) / 0.4));
+      const on = g.snap ? (t >= g.t && t < g.t + dur ? 1 : 0) : clamp((t - g.t) / 0.4) * clamp((g.t + dur + 0.4 - t) / 0.4);
+      for (const sd of this._sides(g, tgt)) busy[sd] = Math.max(busy[sd], on);
     }
     for (const sd of ["L", "R"]) {
       const sg = sd === "L" ? 1 : -1;
@@ -761,9 +790,10 @@ export class Stickman {
     }
     for (const g of actor.gestures ?? []) {
       const dur = g.dur ?? 1.8;
-      const kin = clamp((t - g.t) / 0.42), kout = clamp((g.t + dur - t) / 0.4);
+      // a snapped pose (set on a hard cut) is fully on for its span, with no reach-in or settle
+      const kin = g.snap ? (t >= g.t ? 1 : 0) : clamp((t - g.t) / 0.42), kout = g.snap ? (t < g.t + dur ? 1 : 0) : clamp((g.t + dur - t) / 0.4);
       if (kin <= 0 || kout <= 0) continue;
-      const k = ease("outBackSoft", kin) * ease("inOutSine", kout);
+      const k = g.snap ? 1 : ease("outBackSoft", kin) * ease("inOutSine", kout);
       const tgt = g.target && ctx.resolve ? ctx.resolve(g.target, this.group) : null;
       for (const sd of this._sides(g, tgt)) {
         const sg = sd === "L" ? 1 : -1;
@@ -777,15 +807,16 @@ export class Stickman {
   }
 
   _sides(g, tgt) {
-    if (g.side === "both" || (["hips", "crossed", "shrug", "cheer"].includes(g.gesture) && !g.side)) return ["L", "R"];
+    if (g.side === "both" || (["hips", "crossed", "shrug", "cheer", "mug", "phone", "both"].includes(g.gesture) && !g.side)) return ["L", "R"];
     return [g.side ?? (tgt ? (tgt.x >= 0 ? "L" : "R") : "R")];
   }
 
   update(actor, t, ctx = {}) {
     // overlap / follow-through: elbows and hands trail the body a little (the pose a moment ago is mixed in)
     const back = (dt) => this._pose(actor, Math.max(0, t - dt), { ...ctx, dist: Math.max(0, (ctx.dist ?? 0) - (ctx.speed ?? 0) * dt) });
-    const P2 = back(0.14), P1 = back(0.07);
+    // `still` actors hold their pose between cuts: no trailing (it would show a pose change across a cut)
     const P = this._pose(actor, t, ctx);
+    const [P2, P1] = actor.still ? [P, P] : [back(0.14), back(0.07)];
     const trail = (sd, i, w0, w1, w2) => P.arms[sd][i].clone().multiplyScalar(w0).addScaledVector(P1.arms[sd][i], w1).addScaledVector(P2.arms[sd][i], w2);
     for (const sd of ["L", "R"]) {
       const [sh] = P.arms[sd];
@@ -847,6 +878,43 @@ export class Stickman {
     if (ctx.ink && !actor.color && !this.fixedColors) this.mat.color.copy(ctx.ink);
     this._face(e);
     this.decorate?.({ hips, chest, up, fwd, headC, arms, legs, t });
+    this._held(actor, t, arms, headC, fwd);
+  }
+
+  /** A mug in both hands or a phone in the right hand, while a pose that holds one is on. */
+  _held(actor, t, arms, headC, fwd) {
+    if (!this.items) {
+      const ceramic = new THREE.MeshStandardMaterial({ color: "#f2f0ea", roughness: 0.35, flatShading: true });
+      const mug = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.041, 0.1, 14), ceramic);
+      const handle = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.008, 6, 12), ceramic);
+      handle.position.set(0.048, 0, 0);
+      mug.add(body, handle);
+      const phone = new THREE.Group();
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.15, 0.01), new THREE.MeshStandardMaterial({ color: "#16171b", roughness: 0.3 }));
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.066, 0.135), new THREE.MeshBasicMaterial({ color: "#9cb8e8" }));
+      screen.position.z = 0.0055;        // the screen faces her (+z points at her head); the camera sees its back
+      phone.add(slab, screen);
+      for (const m of [mug, phone]) { m.visible = false; m.traverse((o) => { if (o.isMesh) o.castShadow = true; }); this.group.add(m); }
+      this.items = { mug, phone };
+    }
+    let item = null;
+    for (const g of actor.gestures ?? []) {
+      const dur = g.dur ?? 1.8;
+      if (HELD[g.gesture] && t >= g.t && t < g.t + dur) item = HELD[g.gesture];
+    }
+    this.items.mug.visible = item === "mug";
+    this.items.phone.visible = item === "phone";
+    if (item === "mug") {
+      this.items.mug.position.copy(arms.L[2]).lerp(arms.R[2], 0.5).addScaledVector(fwd, 0.035).add(new THREE.Vector3(0, 0.02, 0));
+      this.items.mug.rotation.set(0, Math.atan2(fwd.x, fwd.z) - Math.PI / 2, 0);
+    } else if (item === "phone") {
+      const p = arms.R[2].clone().add(new THREE.Vector3(0, 0.07, 0)).addScaledVector(fwd, 0.02);
+      this.items.phone.position.copy(p);
+      // the screen faces her (tilted up toward the face), its back to the camera
+      this.items.phone.lookAt(this.group.localToWorld(headC.clone()));
+      this.items.phone.rotateX(0.15);
+    }
   }
 
   _look(track, t, ctx, headC, maxYaw = 1.0) {
@@ -879,6 +947,7 @@ export class Stickman {
       b.position.set(x, by, this.onSkin(x, by) + r * 0.01);
       b.rotation.set(-0.25, 0, -sx * e.browTilt * 0.5);
     }
+    if (this.blushes) this.blushes[0].material.opacity = clamp(e.blush ?? 0) * 0.65;
     const my = this.mouthY ?? -r * 0.36;
     const z = this.onSkin(0, my);
     const arc = this.mouthSmile.userData.arc;

@@ -91,7 +91,7 @@ async function load(spec) {
   document.body.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
   scene.background = new THREE.Color();
-  const set = buildSet(scene, spec.set ?? style.env, spec.seed ?? 1);
+  const set = buildSet(scene, spec.set ?? style.env, spec.seed ?? 1, { look: spec.look, board: spec.board, layout: spec.layout });
   const lights = buildLights(scene);
   const camera = new THREE.PerspectiveCamera(35, W / H, 0.05, 80);
 
@@ -310,7 +310,9 @@ function placeCamera(t) {
     if (sg.b.orbit) pos.sub(look).applyAxisAngle(new THREE.Vector3(0, 1, 0), sg.b.orbit * k).add(look);
     camera.fov = lerp(a.fov, b.fov, k);
   }
-  state.focusPoint = look.clone();
+  // focus: where the shot looks, or the key's own focus point (a subject in the foreground, the rest soft)
+  const fk = sg.b.cut && sg.a !== sg.b ? sg.a : sg.a.cut && sg.a === sg.b ? sg.a : null;
+  state.focusPoint = fk?.focus ? V(fk.focus) : look.clone();
   const shake = num(spec.handheld, 0, 0.03, 0.012);
   pos.x += noise1(t * 0.7, 3) * shake; pos.y += noise1(t * 0.6, 4) * shake;
   camera.position.copy(pos);
@@ -355,8 +357,9 @@ function frame(i) {
   const pal = paletteAt(t);
   state.scene.background.copy(pal.bg);
   state.scene.fog.color.copy(pal.bg);
+  if (state.set.background) { state.scene.background.set(state.set.background); state.scene.fog.color.set(state.set.background); }
   state.set.apply(pal, t);
-  state.lights.apply(pal, state.set.lights);
+  state.lights.apply(pal, state.set.lights, state.set.lightColors);
   state.propMats.apply(pal);
   // place actors first (camera shots follow them), then the camera, then pose them (look-at needs the camera)
   const motions = state.actors.map((a) => actorMotion(a, t));
@@ -365,7 +368,11 @@ function frame(i) {
     a.rig.group.position.copy(m.pos);
     const mv = clamp(m.speed / 0.35);
     const toCam = Math.atan2(state.camera.position.x - m.pos.x, state.camera.position.z - m.pos.z);
-    const rest = typeof a.spec.facing === "number" ? a.spec.facing : a.spec.facing === "camera" ? toCam : 0;
+    // facing: a yaw, "camera", or a track of {t, yaw} keys that switch on cuts (a film "cheat": a character turned
+    // to face each new camera angle, never turning on screen)
+    let fc = a.spec.facing;
+    if (Array.isArray(fc)) fc = [...fc].reverse().find((k) => k.t <= t + 1e-6)?.yaw ?? fc[0]?.yaw ?? 0;
+    const rest = typeof fc === "number" ? fc : fc === "camera" ? toCam : 0;
     const moving = mv > 0 ? Math.atan2(m.vel.x, m.vel.z) : rest;
     let d = moving - rest;
     d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -392,6 +399,9 @@ function frame(i) {
     // focus where the shot looks (the speaker in a close-up), so the other character falls out of focus
     const target = state.focusPoint ?? state.actors[0]?.rig.headWorld() ?? new THREE.Vector3(0, 1.5, 0);
     state.bokeh.uniforms.focus.value = state.camera.position.distanceTo(target);
+    // a shot can ask for a deeper focus (a whiteboard that must stay readable): its own aperture
+    const ck = segment(state.spec.camera ?? [], t).a;
+    state.bokeh.uniforms.aperture.value = typeof ck?.aperture === "number" ? ck.aperture : (state.spec.dof?.aperture ?? 0.0012);
   }
   const u = state.finish.uniforms;
   u.uFrame.value = i; u.uSat.value = pal.sat; u.uContrast.value = pal.contrast; u.uWarm.value = pal.warm;

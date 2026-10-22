@@ -208,44 +208,75 @@ LINES:
 
 # ---- direction ------------------------------------------------------------------------------
 
-DIALOGUE_RULES = """THE FORMAT: a two-character comedy short. No narrator: only the two characters talk, one short line at a
-time, at a desk late at night. Hard cuts on every line, so every line must earn its cut. Each line is sent as written
-to an expressive voice model (ElevenLabs Eleven v4), so the script carries the acting.
+DIALOGUE_RULES = """THE FORMAT: a deadpan comedy short about living with AI tools. A person (character a) sits at her desk with
+her AI (character b, a small creature on the desk; in group episodes more AIs, c and d, sit beside it). No narrator:
+only they talk, one short line at a time. Hard cuts on every line, so every line must earn its cut. Each line is
+sent as written to an expressive voice model (ElevenLabs Eleven v4), so the script carries the acting.
+
+PICK ONE PREMISE TYPE (all the reference reels fit one):
+- tender quirk: an AI limitation turned sweet (it forgets every morning and she remembers; mom thinks it's a person)
+- explain like I'm five: she bans jargon, the AI explains on a WHITEBOARD with a metaphor, she tests edge cases
+  ("What if he brings the wrong dish?" "That's a bug."), it names the concepts; set "classroom"
+- team of AIs: several AIs with clashing habits on one task (one asks four questions, one asks none, one starts
+  before the brief); uses c and d when the cast has them
+- the AI can't do the human thing: a plain pleasure it can't have (it can look at a reel but can't like it)
+- credit and work: who really did it, her taste against its output ("she said no sixty-one times")
 
 Rules (an app checks them and sends the script back if one breaks):
-1. Lines are short: mostly 2-7 words, never more than 9. Write how tired people actually talk ("You counted?").
-2. Ping-pong. Nobody has more than 3 lines in a row, and each character has at least 30% of the lines.
-3. Write the performance into the text, like a human actor would play it:
-   - an audio tag in square brackets before the words (or mid-line) for the emotion: [exasperated], [deadpan],
-     [sighs], [sarcastic], [excited], [proudly], [whispers], [groans], [nervously], [laughs], [flatly],
-     [cheerfully], [annoyed]. At most 2 per line; at least a third of the lines have one.
-   - stretched letters where a person draws a word out ("Claaauude!!", "Nooo.", "Fiiine."), CAPS on the one
-     word that lands ("It was the WRONG blue."), "..." inside a line for a hesitation, "!!" for a burst.
-   - vary the emotion: annoyed, deadpan, proud, panicked, guilty, delighted; not one flat tone.
-4. Timing, like real conversation, for every line: "quick" (answers straight back, no gap; at least 2),
-   "normal", or "beat" (a sharp look first, then the answer; 1-3 of them, where the silence is the joke).
-5. Oddly specific in-story numbers make the jokes: counts, times, sizes ("Sixty-one times.", "It's 1 AM.",
-   "Two pixels."). At least 2. They are details about these characters, never facts about the world: no
+1. Line 1 is the approved hook, word for word (with its delivery), said by a. Hooks name the AI and the situation:
+   "Claude. My mom thinks you're a person."
+2. Lines are short: mostly 2-6 words, never more than 9 (a whiteboard explanation line may run to 16). Use
+   one-word punches ("No." "Done." "Eleven." "And?"): at least 2. Write how tired people actually talk.
+3. Ping-pong. Nobody has more than 3 lines in a row. With two characters each has at least 30% of the lines; in a
+   group a has at least 25% and every AI speaks at least twice.
+4. Write the performance into the text, like a human actor would play it:
+   - an audio tag in square brackets for the emotion: [deadpan], [flatly], [sighs], [exasperated], [cheerfully],
+     [hesitant], [tender], [embarrassed], [excited], [whispers], [nervously], [proudly]. At most 2 per line; at
+     least a third of the lines have one. She is mostly dry and flat; the AI is earnest and polite, bright and
+     chirpy only in its "assistant mode" ("[cheerfully] Hello! How can I help you today?").
+   - stretched letters where a person draws a word out ("Claaauude.", "Nooo."), CAPS on the one word that lands,
+     "!!" for a burst.
+   - "..." at the START of a line is a beat of hesitation before it ("...We've met.", "...It's complicated."): 3-6
+     of these, on the lines that carry the feeling. They show in the captions.
+   - at most once, an interruption: a line that stops mid-sentence ("Should it have a") and the next speaker
+     barges in.
+5. Timing for every line, like real conversation: "quick" (a comeback straight back; about one line in five),
+   "normal" (a half-second turn), or "beat" (a sharp look first, about a second; 1-4 of them, before "..." lines
+   and where the silence is the joke).
+6. Oddly specific in-story numbers make the jokes: "forty times a day", "sixty-one times", "eight of me", "two
+   pixels off", "1 AM". At least 2. They are details about these characters, never facts about the world: no
    percentages, studies, research, surveys or averages.
-6. A callback: a later line repeats an earlier phrase with a new meaning ("It's great!" after "That's great!",
-   "the wrong blue" twice).
-7. A turn in the second half: the line where the meaning flips (the AI credits the human's taste, the human
-   admits something). Give its line number as `turn`.
-8. The ending loops back: the last line restarts the situation (one more tiny fix, the same name, the same
-   hour), so the video invites a rewatch. Give the punchline line number as `button`.
-9. Line 1 is the approved hook, word for word (with its delivery), spoken by character a.
-10. TITLE: all lowercase, no tags, a quote or paraphrase of the script's best line, then a question to the viewer that
-   invites a comment ("she said no sixty-one times. that's the job. what's the pettiest thing you've made your AI
-   redo?"). At most 110 characters.
-11. Insider humour for the niche is good (a known quirk of AI tools, a developer's habit), but never mock a real,
-   named person, and keep it kind."""
+7. A recurring tic or a callback: a later line brings back an earlier phrase with a new meaning ("Quick question."
+   three times; "You're absolutely right" turned around).
+8. A turn about two thirds in: the line where the meaning flips (she wrote it all down; it deleted the desktop).
+   Give its line number as `turn`.
+9. The button (the last 1-2 lines): a loop back to the opening, a short reversal by a side character, a self-own,
+   or a deadpan cap. It reuses a word or name from the first lines. Give its line number as `button`.
+10. Her pose (optional `pose` on her lines, held until changed, set on a cut): rest (hands on the desk), mug (both
+   hands round a mug: mornings), phone (reading a phone: messages, reels), crossed (arms crossed: fed up), temple
+   (a hand at her temple: tired), palm (an open palm toward an AI: "he's faster"), both (both hands forward: "both
+   of you"), finger (a finger raised: assigning jobs). Change it 2-4 times in a video.
+11. `scene`: {"set": "office" | "classroom", "look": "morning" | "rain" | "night" | "dusk"}. The window sets the
+   mood: morning for tender, rain for cosy or awkward, night for crunch and work, dusk for casual fun. "classroom"
+   only for explain-like-I'm-five (two speakers).
+12. Classroom only: the AI writes on the whiteboard as it talks. Give those lines a `board` list of items in the
+   order they appear: {"op": "title", "text": "What is an API?"} first, then "word" (a jargon word, max 3),
+   "strike" (she vetoes: crosses the words out), "figure" (a stick figure with a name), "box" (a labelled box),
+   "arrow" (between the last two diagram items), "label" (a "= meaning" under an item, in order). Add "at": a word
+   of the line, to show it as that word is said. Keep each text under 20 characters.
+13. TITLE: all lowercase, no tags: two short mirrored sentences about the premise, then one question to the viewer
+   ("one asks four questions. one asks none. which one are you working with today?"). At most 110 characters.
+14. Insider humour for the niche is good (a known quirk of AI tools, a developer's habit), but never mock a real,
+   named person, keep it kind, and write new lines: never reuse another creator's script."""
 
 
 def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: str, profile_summary: list[str],
                     wpm: float, revise: dict | None = None) -> AgentTask:
-    """A two-character dialogue script (speaker-tagged lines) for the dialogue-shorts format."""
+    """A dialogue script (speaker-tagged, performed lines with timing, poses and the scene) for dialogue shorts."""
     a, b = cast["a"], cast["b"]
-    n_lines = (max(4, round(duration / 4)), round(duration / 2.2))
+    extra = [s for s in ("c", "d") if (cast.get(s) or {}).get("enabled")]
+    who = ["a", "b", *extra]
+    n_lines = (max(4, round(duration / 3.2)), round(duration / 1.9))
     revision = ""
     if revise:
         revision = f"""
@@ -253,28 +284,36 @@ REVISION: fix every flag below and keep everything that works. Previous script:
 {_j(revise['res'])}
 FLAGS:
 {_j(revise['flags'])}"""
+    extras = "".join(f"- {s} = {cast[s]['name']}: {cast[s]['role']}\n" for s in extra)
+    speaker_enum = " | ".join(f'"{s}"' for s in who)
     prompt = f"""Use the `ig-reel` skill's voice rules (and `ig-human` to avoid machine-sounding lines) to write a
 {duration}-second dialogue short, about {n_lines[0]}-{n_lines[1]} lines (it is spoken at about {wpm:.0f} words a minute
-with short gaps, in {duration // 10} clips of 10 s).
+with half-second turns, in {duration // 10} clips of up to 10 s).
 
 {DIALOGUE_RULES}
 
 CHARACTERS:
 - a = {a['name']}: {a['role']}
 - b = {b['name']}: {b['role']}
-
+{extras}
 TOPIC: {_j(topic)}
 APPROVED HOOK (line 1, character a, word for word): {hook['say']}
 NICHE: {niche}
 NICHE PATTERN PROFILE: {_j(profile_summary)}
 {revision}
-Return the lines in order as {{"speaker": "a"|"b", "text": "<delivery tags + words>", "timing": "quick"|"normal"|"beat"}},
-plus `turn` and `button` (1-based line numbers),
-the `title`, and `claims_to_source` (anything a viewer could read as a real-world fact; usually empty)."""
-    line = _obj({"speaker": {"type": "string", "enum": ["a", "b"]}, "text": STR,
-                 "timing": {"type": "string", "enum": ["quick", "normal", "beat"]}}, ["speaker", "text", "timing"])
-    schema = _obj({"title": STR, "lines": _arr(line, 4), "turn": INT, "button": INT, "claims_to_source": _arr(STR)},
-                  ["title", "lines", "turn", "button"])
+Return the lines in order as {{"speaker": {speaker_enum}, "text": "<delivery tags + words>", "timing": "quick"|"normal"|"beat",
+"pose": optional, "board": optional}}, plus `scene`, `turn` and `button` (1-based line numbers), the `title`, and
+`claims_to_source` (anything a viewer could read as a real-world fact; usually empty)."""
+    board_item = _obj({"op": {"type": "string", "enum": ["title", "word", "strike", "figure", "box", "arrow", "label"]},
+                       "text": STR, "at": STR}, ["op"])
+    line = _obj({"speaker": {"type": "string", "enum": who}, "text": STR,
+                 "timing": {"type": "string", "enum": ["quick", "normal", "beat"]},
+                 "pose": {"type": "string", "enum": ["rest", "mug", "phone", "crossed", "temple", "palm", "both", "finger"]},
+                 "board": _arr(board_item)}, ["speaker", "text", "timing"])
+    scene = _obj({"set": {"type": "string", "enum": ["office", "classroom"]},
+                  "look": {"type": "string", "enum": ["morning", "rain", "night", "dusk"]}}, ["set", "look"])
+    schema = _obj({"title": STR, "scene": scene, "lines": _arr(line, 4), "turn": INT, "button": INT,
+                   "claims_to_source": _arr(STR)}, ["title", "scene", "lines", "turn", "button"])
     return AgentTask("dialogue_script", prompt, schema, ["ig-reel", "ig-human"], "direction",
                      {"topic": topic, "hook": hook, "duration": duration, "cast": cast, "niche": niche,
                       "profile_summary": profile_summary, "wpm": wpm, "revise": revise})

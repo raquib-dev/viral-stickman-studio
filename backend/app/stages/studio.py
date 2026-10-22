@@ -204,15 +204,15 @@ async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int)
     revise, res, flags = None, {}, []
     for attempt in range(1, 4):
         res = await ctx.agent.run(tasks.dialogue_script(topic, hook, duration, cast, p["niche"], profile["summary"], wpm, revise), ctx)
-        res = {**res, "lines": [{"speaker": ln["speaker"], "text": ln["text"].strip(), "timing": ln.get("timing", "normal")}
-                                for ln in res["lines"]]}
+        res = {**res, "lines": [{"speaker": ln["speaker"], "text": ln["text"].strip(), "timing": ln.get("timing", "normal"),
+                                 **{k: ln[k] for k in ("pose", "board") if ln.get(k)}} for ln in res["lines"]]}
         flags = dlg.dialogue_flags(res, cast, hook["say"], duration, wpm)
         ctx.log(f"dialogue attempt {attempt}: {len(res['lines'])} lines, {len(flags)} flag(s)")
         if not flags:
             break
         for f in flags:
             ctx.log("  flag: " + f, "warn")
-        revise = {"res": {k: res.get(k) for k in ("title", "lines", "turn", "button")}, "flags": flags}
+        revise = {"res": {k: res.get(k) for k in ("title", "scene", "lines", "turn", "button")}, "flags": flags}
     else:
         ctx.log("flags remain after 3 attempts: shown in Studio for you to fix by re-running Script", "warn")
     lines = res["lines"]
@@ -227,7 +227,8 @@ async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int)
     data = {"mode": "dialogue", "title": res["title"], "lines": lines, "clips": clips, "hook": hook, "topic": topic,
             "duration": duration, "wpm": wpm, "flags": flags, "plan": [], "turn": res.get("turn"), "button": res.get("button"),
             "callback": dlg.find_callback(lines), "claims_to_source": res.get("claims_to_source") or [],
-            "cast": {s: cast[s]["name"] for s in dlg.SPEAKERS}, "placeholders": placeholders(clips)}
+            "cast": {s: cast[s]["name"] for s in dlg.speakers(cast)}, "placeholders": placeholders(clips),
+            "scene": dlg.scene_for({"scene": res.get("scene"), "lines": lines})}
     if res.get("_fixture"):
         data["_fixture"] = True
     ctx.write_json("script/script.json", data)
@@ -236,7 +237,8 @@ async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int)
         md += [f"## Clip {c['index'] + 1} ({c['index'] * 10}-{c['index'] * 10 + 10}s)"]
         md += [f"- **{cast[ln['speaker']]['name']}:** {ln['text']}" for ln in c["lines"]] + [""]
     ctx.write_text("script/script.md", "\n".join(md))
-    ctx.log(f"dialogue: {len(lines)} lines in {n_clips} clips; turn at line {data['turn']}, "
+    shown = dlg.scene_for(data, ctx.settings)          # what will render (Settings can force the set or look)
+    ctx.log(f"dialogue: {len(lines)} lines in {n_clips} clips, {shown['set']} ({shown['look']}); turn at line {data['turn']}, "
             f"callback {('lines %d and %d' % (data['callback'][0] + 1, data['callback'][1] + 1)) if data['callback'] else 'missing'}")
     return {"outputs": ["script/script.json", "script/script.md"]}
 

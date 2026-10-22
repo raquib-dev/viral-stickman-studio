@@ -1,54 +1,35 @@
 # Mapping to the app's Dialogue short pipeline
 
-This is where the reference style meets the app (`backend/app/dialogue.py`, the local-threejs
-renderer). Settings are under Settings → Dialogue shorts.
+This is where the reference style lives in the app:
+- `backend/app/dialogue.py`: the rules, shots, timing and scene;
+- the local-threejs renderer: sets in `renderer/src/env.js`, AIs in `mascot.js`, poses and faces in `rig.js`;
+- Settings → Dialogue shorts.
 
-## Already matching
+## Built to the reference measurements
 
 | Reference | App |
 |---|---|
-| One shot per line, hard cuts only | `plan_shots` plus `build_scene`: a cut key per line |
-| Her MCU / the mascot at desk height with her behind / a frontal wide | the shot vocabulary `a_cu`, `a_third`, `b_cu`, `b_ots` (low angle on the mascot with her behind), `two`, `wide0`/`wide1` |
-| Characters still; only faces, blinks and mouths move | `motion: "still"` (the default) |
-| Captions per line at the top in a dark translucent box with a quick fade, tags stripped | `build_line_ass`, `caption_lines` |
-| A slow push-in on every shot | the `push` field on every camera key (3-6 %) |
-| A constant room-tone bed, no music | `dialogue.bed: "room"` with a sidechain duck |
-| Length follows the dialogue, not padded to 60 s | each clip ends on its last line plus 0.3 s (`clip_end`) |
-| Short performed lines, timing labels, a callback, a turn, a loop | `DIALOGUE_RULES` and the `dialogue_flags` checker |
-| The lowercase title ending in a question | checked by `dialogue_flags` |
+| First word at 0.37 s; median gap 0.47 s (quick 0.15-0.3 s, beat 0.6-1.0 s) | `LEAD` 0.37; `GAPS` quick 0.2 / normal 0.45 / beat 0.9; a turn across a clip cut keeps its gap (`clip_lead`) |
+| Cuts 0.15 s before the next speaker's first word | `CUT_LEAD` 0.15; a beat cuts to the listener about 0.33 s after the previous line |
+| Her MCU; the AI at desk height with her soft behind it, alternating sides; a frontal wide | shots `a_cu`, `a_third`, `m_<who>_l/r` (focus on the AI, her body blurred, the AI turned to face the angle), `wide` |
+| A wide every 8-12 lines; the last line on the wide, then a 1.5-2 s pull-back | a wide after 9 lines without one; the final clip holds 1.7 s and dollies back (`end_hold`) |
+| The same speaker going on keeps the shot | `cut: false` in the plan |
+| A slow push-in on every shot, no shake | `push` on every key, `handheld` 0 |
+| Poses change on cuts: mug, phone, arms crossed, temple, palm, both hands, finger | `pose` per line, held until changed, snapped on the cut |
+| Closed-eye smile; worried brows with a blush | expressions `content`, `embarrassed`, `worried` |
+| The AIs have no mouth and get small square eyes when caught out | `mascot_mouth` off by default; mascot face `caught` |
+| A cube with glowing eyes; a gradient cloud with `>_` | mascot shapes `cube`, `cloud`; cast `c` and `d` (switch on in Cast) |
+| Morning, rain, bokeh night and dusk outside the window | office looks `morning`, `rain`, `night`, `dusk` |
+| Whiteboard explainer: title, jargon struck through in red, stick figures, arrows, labels, a pointer | `classroom` set; `board` items per line, each shown as its word is said |
+| Captions: dark translucent box about 11 % from the top, 0.15 s fade-in, up until the next line | `build_line_ass`, `caption_lines` |
+| An ambience bed (rain, city, room) with no music, fading out with the pull-back | bed `auto` → `rain` / `city` / `room` |
+| About -15 LUFS, 30 fps | `dialogue.lufs` -15, `dialogue.fps` 30 |
+| Length follows the dialogue | each clip ends on its last line (`clip_end`) |
 
-## Measured differences (tune or build)
+## Still different
 
-1. **Pause lengths.**
-   - The references measure a 0.47 s median gap: quick about 0.15-0.3 s, beat 0.6-1.0 s.
-   - The app uses quick 0.06, normal 0.2, beat 0.75 (`GAPS` in `dialogue.py`).
-   - The app's normal turn is less than half the reference pause. To match exactly, use about
-     `{"quick": 0.2, "normal": 0.45, "beat": 0.9}`.
-2. **First word at 0.37 s.** The app's `LEAD` is 0.22 s.
-3. **Cut lead.** The references cut 0.15 s before speech; the app cuts 0.12 s before (normal) and
-   0.04 s before (quick).
-4. **The mascot's mouth.** The reference Claude has no mouth and acts with its eyes only. The app
-   gives it a small mouth that opens with speech, at your earlier request (lip sync for all
-   characters). Pick one.
-5. **Poses per shot.** The reference girl changes pose between shots: mug, phone, arms crossed, hand
-   at her temple, open palm. The app's still mode holds one rest pose for the whole video.
-6. **Blush and the closed-eye smile.** The references use them on key lines. The app's faces
-   already have brows (skeptical, worried); blush and a closed-eye smile are missing.
-7. **Mascot eye shapes.** The references add a small-square "caught out" eye. The app's `EYES` table
-   has `skeptical` (slits) and `surprised` but no small squares.
-8. **The 1.5-2 s pull-back after the last word.** The app's last shot is a wide that pushes in, and
-   the clip ends 0.3 s after the last word.
-9. **Caption placement.** The references put the box's top edge at about 10-12 % of frame height;
-   the app uses the platform safe zone's top margin plus 1 %. Check it on a still.
-10. **More AI characters** (a cube with glowing eyes, a cloud with `>_`). The app's dialogue cast
-    is two speakers, a and b.
-11. **Sets.** The references use four looks for the window (morning, rain, bokeh night, dusk) and a
-    whiteboard classroom with board content that appears in sync with the words and a pointer. The
-    app has the office set with a dark or light theme.
-12. **Loudness.** The references measure about -15 LUFS; the app normalises to -16 LUFS (fine for
-    Shorts and Reels, and 1 dB quieter).
-13. **Frame rate.** The references are 30 fps; the app's dialogue clips render at the project fps
-    (24 by default).
-
-Items 1-3, 8, 9, 12 and 13 are small parameter changes. Items 4-7 are renderer work on existing
-characters. Items 10-11 are new assets.
+- In the reference classroom the girl sits on a chair. The app's chibi stands behind the school desk; it reads
+  the same in the board wide and in her profile shot.
+- The references sometimes prop a phone on a stand facing the AI. In the app the phone is only ever in her hand.
+- Accent and voice timbre come from the voices you pick (ElevenLabs voice IDs or Kokoro names). The reference
+  voices can't be identified from measurements.

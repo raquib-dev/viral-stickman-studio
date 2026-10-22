@@ -211,10 +211,20 @@ def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: s
         k += 1
     if not any(ln["timing"] == "beat" for ln in lines[1:]):
         lines[-2]["timing"] = "beat"
+    # extra AIs in a group episode: each takes over some of b's lines with its own tic
+    b_lines = [j for j in range(2, len(lines) - 2) if lines[j]["speaker"] == "b"]
+    for k, (s_, tic) in enumerate((("c", "[flatly] Done."), ("d", "[excited] Already did it!"))):
+        if (cast.get(s_) or {}).get("enabled"):
+            for j in b_lines[k::3][:max(2, len(lines) // 9)]:
+                lines[j] = {"speaker": s_, "text": tic, "timing": "quick"}
+    # her pose changes on a few of her lines: a hand at her temple, arms crossed, then hands back on the desk
+    a_lines = [j for j, ln in enumerate(lines) if ln["speaker"] == "a"]
+    for j, pose in zip(a_lines[::max(1, len(a_lines) // 3)], ("temple", "crossed", "rest")):
+        lines[j]["pose"] = pose
     clean_last = re.sub(r"\[[^\]]*\]\s*", "", lines[-1]["text"]).lower()
     title = f"{clean_last} what's the pettiest thing you've made your ai redo?"
-    return {**FIX, "title": title, "lines": lines, "turn": max(2, round(len(lines) * 0.75)), "button": len(lines),
-            "claims_to_source": []}
+    return {**FIX, "title": title, "scene": {"set": "office", "look": "night"}, "lines": lines,
+            "turn": max(2, round(len(lines) * 0.75)), "button": len(lines), "claims_to_source": []}
 
 
 def script(topic: dict, hook: dict, duration: int, platform: str, plan: list, profile_summary: list, niche: str,

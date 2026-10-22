@@ -240,8 +240,11 @@ async def cast_preview(slug: str) -> dict:
     from .render import threejs as tj
     p = _project_or_404(slug)
     cast = dlg.cast_for(p["data"])
-    plan = [{"i": 0, "speaker": "a", "shot": "wide", "wide_variant": 0, "face": "neutral", "gesture": None}]
-    scene = dlg.build_scene(plan, {"starts": [0.5], "ends": [2.0]}, cast, {}, 24, 540, 960, 3.0, seed=7, quality="high")
+    plan = [{"i": 0, "speaker": "a", "shot": "wide", "face": "neutral", "gesture": None, "pose": "rest"}]
+    # the look the next script would get by default (Settings → Dialogue shorts), on the office set
+    look = dlg.scene_for({}, load_settings())["look"]
+    scene = dlg.build_scene(plan, {"starts": [0.5], "ends": [2.0]}, cast, {}, 24, 540, 960, 3.0, seed=7, quality="high",
+                            dof=0.03, scene={"set": "office", "look": look})
     errs = tj.validate_scene(scene)
     if errs:
         raise HTTPException(400, "; ".join(errs))

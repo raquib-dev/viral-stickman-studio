@@ -232,7 +232,9 @@ def build_line_ass(lines: list[dict], ratio: str, frame_w: int, frame_h: int, ca
     translucent dark box, a quick fade. `lines` carry start/end in seconds. Returns (ass_text, safe-zone problems)."""
     m = safe_margins(ratio)
     size = int(frame_h * (0.03 if ratio == "9:16" else 0.045))
-    top = int(frame_h * (m["top"] + 0.01))
+    # the reference reels put the box's top edge at 10-12 % of the height, over the window and above the heads,
+    # a little higher than the platforms' 14 % guide; only the width is checked against the safe zone
+    top = int(frame_h * (0.115 if ratio == "9:16" else m["top"] + 0.01))
     ml, mr = int(frame_w * max(m["left"], 0.12)), int(frame_w * max(m["right"], 0.12))
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -243,7 +245,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Line,Arial,{size},&H00FFFFFF,&H00FFFFFF,&H8C000000,&H00000000,1,0,0,0,100,100,0,0,3,{max(3, size // 5)},0,8,{ml},{mr},{top},1
+Style: Line,Arial,{size},&H00FFFFFF,&H00FFFFFF,&H3336302B,&H00000000,1,0,0,0,100,100,0,0,3,{max(3, size // 5)},0,8,{ml},{mr},{top},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -253,8 +255,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for ln in lines:
             if ln["end"] <= ln["start"]:
                 continue
-            events.append(f"Dialogue: 0,{_ass_time(ln['start'])},{_ass_time(ln['end'])},Line,,0,0,0,,{{\\fad(110,110)}}{_esc(ln['text'])}")
+            events.append(f"Dialogue: 0,{_ass_time(ln['start'])},{_ass_time(ln['end'])},Line,,0,0,0,,{{\\fad(160,0)}}{_esc(ln['text'])}")
         if lines:
             longest = max((ln["text"] for ln in lines), key=len)
-            boxes.append(text_box("line captions", longest, ratio, top / frame_h, size, frame_w, frame_h))
+            boxes.append(text_box("line captions", longest, ratio, max(top / frame_h, m["top"]), size, frame_w, frame_h))
     return header + "\n".join(events) + "\n", safe_zone_violations(boxes, ratio)

@@ -24,6 +24,7 @@ class ClipSpec:
     lines: list | None = None     # dialogue shorts: this clip's lines [{i, speaker, text}]
     cast: dict | None = None      # dialogue shorts: the two characters (names, kinds, voices, looks)
     plan: list | None = None      # dialogue shorts: the shot plan for these lines
+    scene: dict | None = None     # dialogue shorts: set, look, final clip?, board items already up, desk mug
 
 
 @dataclass

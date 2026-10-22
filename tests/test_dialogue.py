@@ -32,7 +32,7 @@ GOOD = {"title": "she said no sixty-one times. that's the job. what's the pettie
             ("a", "I just said no a lot."), ("b", "[cheerfully] Sixty-one times.", "quick"), ("a", "[sighs] You counted?"),
             ("b", "You said it very clearly."), ("a", "Anyone can say no."), ("b", "[nervously] I can't. I say yes.", "quick"),
             ("b", "Knowing that is the job."), ("a", "...Okay. It's good.", "beat"), ("b", "[excited] It's great!!", "quick"),
-            ("a", "[annoyed] The footer's two pixels off."), ("b", "It's 1 AM."), ("a", "[exasperated] Two pixels, Claaauude."))}
+            ("a", "[annoyed] The footer's two pixels off."), ("b", "1 AM."), ("a", "[exasperated] Two pixels, Claaauude."))}
 
 
 def test_cast_defaults_merge_and_repair():
@@ -98,33 +98,100 @@ def test_direction_rules():
     plan = d.plan_shots(GOOD["lines"])
     shots = [p["shot"] for p in plan]
     assert shots[0] == "a_cu"                                           # the hook lands in her face
-    assert shots[1] == "b_ots"                                          # a quick answer: both in frame
-    assert shots[4] == "a_cu"                                           # a beat: the responder's close-up
-    assert shots[5] == "two"                                            # the same person twice: a new angle
-    assert shots[-1].startswith("wide") and shots[-2] == "two"          # the button plays wide
-    assert all(x != y for x, y in zip(shots, shots[1:]))                # never the same framing twice in a row
+    assert shots[1] == "m_b_r" and shots[3] == "m_b_l"                  # the AI at desk height, her behind it, alternating
+    assert plan[5]["cut"] is False and shots[5] == shots[4]             # she goes on: the same shot holds, no cut
+    assert shots[-1] == "wide"                                          # the last line plays wide (the pull-back follows)
+    cuts = [p["shot"] for p in plan if p["cut"]]
+    assert all(x != y or x == "wide" for x, y in zip(cuts, cuts[1:]))   # never the same framing on two cuts in a row
+    assert "a_third" in shots                                           # off-centre framings are used
     since = 0
-    for sh in shots:                                                    # both characters in frame at least every 5 lines
-        since = 0 if sh in ("two", "wide0", "wide1") or sh.endswith("_ots") else since + 1
-        assert since <= 5
-    assert {"a_third", "b_third"} & set(shots)                          # off-centre framings are used
+    for sh in shots:                                                    # a wide at least every 10 lines
+        since = 0 if sh == "wide" else since + 1
+        assert since <= 10
     assert plan[7]["face"] == "skeptical"                               # [sighs] You counted?
     assert plan[1]["face"] == "happy" and plan[1]["gesture"] == "cheer" # [excited] That's GREAT!
+    assert plan[10]["face"] == "caught"                                 # [nervously]: the AI's small square eyes
+    assert all(p["pose"] == "rest" for p in plan)                       # no poses written: hands on the desk
     assert all(d.shot_label(sh, {"a": "Mia", "b": "Claude"}) for sh in shots)
+
+
+def test_poses_hold_until_changed_and_morning_starts_with_a_mug():
+    lines = [{**ln} for ln in GOOD["lines"]]
+    lines[2]["pose"], lines[9]["pose"] = "crossed", "temple"
+    plan = d.plan_shots(lines, {"set": "office", "look": "night"})
+    poses = [p["pose"] for p in plan]
+    assert poses[:2] == ["rest", "rest"] and set(poses[2:9]) == {"crossed"} and set(poses[9:]) == {"temple"}
+    assert d.plan_shots(GOOD["lines"], {"set": "office", "look": "morning"})[0]["pose"] == "mug"
+    timing = {"starts": [0.37 + 1.4 * k for k in range(len(lines))], "ends": [1.37 + 1.4 * k for k in range(len(lines))]}
+    scene = d.build_scene(plan, timing, CAST, {}, 30, 720, 1280, 26.0, seed=3, quality="high")
+    g = scene["actors"][0]["gestures"]
+    assert all(x["snap"] for x in g) and g[0]["t"] == -1.0             # poses switch on cuts, never on screen
+    cuts = {k["t"] for k in scene["camera"] if k.get("cut")}
+    assert all(x["t"] in cuts for x in g[1:])
+
+
+def test_group_cast_opens_wide_and_gives_each_ai_its_shot():
+    cast = d.cast_for({"cast": {"c": {"enabled": True}, "d": {"enabled": True}}})
+    assert d.speakers(cast) == ("a", "b", "c", "d") and d.speakers(CAST) == ("a", "b")
+    lines = L(("a", "Okay, everyone. Launch is tomorrow."), ("b", "Tomorrow?!", "quick"), ("c", "[flatly] Fine."),
+              ("a", "So I got help."), ("d", "[excited] Hi! I already started.", "quick"), ("a", "I haven't said what."),
+              ("d", "I guessed."), ("c", "Done."), ("b", "...I was asking a question.", "beat"), ("a", "Nobody touch anything."))
+    plan = d.plan_shots(lines)
+    assert plan[0]["shot"] == "wide" and plan[2]["shot"].startswith("m_c_") and plan[4]["shot"].startswith("m_d_")
+    timing = {"starts": [0.37 + 1.4 * k for k in range(len(lines))], "ends": [1.37 + 1.4 * k for k in range(len(lines))]}
+    scene = d.build_scene(plan, timing, cast, {}, 30, 720, 1280, 16.0, seed=3, quality="high")
+    assert tj.validate_scene(scene) == []
+    ids = {x["id"]: x for x in scene["actors"]}
+    assert set(ids) == {"a", "b", "c", "d"} and ids["c"]["appearance"]["shape"] == "cloud" and ids["d"]["appearance"]["shape"] == "cube"
+    assert all(ids[s]["appearance"]["mouth"] is False and "mouth" not in ids[s] for s in "bcd")   # the AIs act with their eyes
+    yaws = ids["c"]["facing"]                                           # cheated to face its camera, from the cut on
+    assert isinstance(yaws, list) and any(abs(k["yaw"]) > 0 for k in yaws)
+    flags = " | ".join(d.dialogue_flags({**GOOD, "lines": lines}, cast, lines[0]["text"], 20, 150))
+    assert "speaker must be" not in flags
+
+
+def test_scene_picks_set_and_look_settings_win():
+    s = {"scene": {"set": "classroom", "look": "dusk"}, "lines": L(("a", "Explain it."), ("b", "Okay."))}
+    assert d.scene_for(s) == {"set": "classroom", "look": "dusk"}
+    assert d.scene_for(s, {"dialogue": {"look": "rain"}}) == {"set": "classroom", "look": "rain"}
+    assert d.scene_for({"scene": {"set": "classroom"}, "lines": L(("a", "Hi."), ("c", "Done."))}) == {"set": "office", "look": "night"}
+    assert d.scene_for({}) == {"set": "office", "look": "night"} and d.scene_for({"scene": {"set": "classroom"}})["look"] == "morning"
+
+
+def test_classroom_board_fills_in_as_the_words_are_said():
+    lines = [{"speaker": "a", "text": "Claude. Explain an API like I'm five.", "timing": "normal",
+              "board": [{"op": "title", "text": "What is an API?"}]},
+             {"speaker": "b", "text": "It's an interface between systems.", "timing": "quick",
+              "board": [{"op": "word", "text": "interface", "at": "interface"}, {"op": "word", "text": "systems", "at": "systems"}]},
+             {"speaker": "a", "text": "No. Simpler.", "timing": "quick", "board": [{"op": "strike"}]},
+             {"speaker": "b", "text": "Okay. A restaurant.", "timing": "beat"}]
+    scene_d = {"set": "classroom", "look": "morning"}
+    plan = d.plan_shots(lines, scene_d)
+    assert [p["shot"] for p in plan] == ["board", "board", "board", "b_books"]
+    timing = {"starts": [0.37, 2.3, 4.2, 5.8], "ends": [2.0, 4.0, 5.0, 7.0]}
+    scene = d.build_scene(plan, timing, CAST, {}, 30, 720, 1280, 7.3, seed=3, quality="high", scene=scene_d,
+                          board_before=[{"op": "title", "text": "Earlier"}])
+    assert tj.validate_scene(scene) == [] and scene["set"] == "classroom"
+    ev = scene["board"]["events"]
+    assert ev[0] == {"t": -1.0, "op": "title", "text": "Earlier"}       # earlier clips' writing is already up
+    word = next(e for e in ev if e.get("text") == "systems")
+    assert 2.3 + 0.5 * 1.7 <= word["t"] <= 4.0                           # appears as "systems" is said
+    flags = " | ".join(d.dialogue_flags({**GOOD, "scene": scene_d, "lines": GOOD["lines"]}, CAST, HOOK, 60, 150))
+    assert "board with a title" in flags and "at least 4 items" in flags
 
 
 def test_layout_follows_each_lines_timing():
     t = d.layout([1.2, 0.8, 1.5, 0.9], ["normal", "quick", "beat", "normal"])
     assert t["tempo"] == 1.0 and t["overflow"] == 0
     g = [t["starts"][k + 1] - t["ends"][k] for k in range(3)]
-    assert g[0] < 0.1 and g[1] > 0.6 and 0.15 <= g[2] <= 0.25           # quick answer, a beat, a normal turn
+    assert 0.15 <= g[0] <= 0.25 and 0.8 <= g[1] <= 1.0 and 0.4 <= g[2] <= 0.5   # quick comeback, a beat, a normal turn
     long = d.layout([3.0, 2.6, 2.8, 2.4], ["normal"] * 4)
     assert 1.0 < long["tempo"] <= 1.25 and long["ends"][-1] <= 10.0
     assert all(long["starts"][k + 1] >= long["ends"][k] for k in range(3))
     over = d.layout([4.0, 4.0, 4.0], ["normal"] * 3, max_speedup=1.1)
     assert over["overflow"] > 0
     short = d.layout([0.8, 0.7], ["normal", "normal"])                  # spare time never becomes dead air mid-talk
-    assert short["starts"][1] - short["ends"][0] <= 0.21
+    assert short["starts"][1] - short["ends"][0] <= 0.46
     # a clip ends when its talk does (plus a short tail), so the next clip's first line is not after dead air
     tight = d.layout([0.8, 0.7], ["normal", "normal"], pad=False)
     assert tight["starts"][0] == d.LEAD
@@ -132,6 +199,10 @@ def test_layout_follows_each_lines_timing():
     assert abs(end - (tight["ends"][-1] + d.TAIL)) <= 1 / 24 and abs(end * 24 - round(end * 24)) < 1e-6
     assert d.clip_end(long) <= 10.0 and d.clip_end({"starts": [], "ends": []}) == 10.0
     assert d.clip_end(d.layout([0.3], ["normal"], pad=False)) == 2.0      # never a flash clip
+    later = d.layout([0.8], ["normal"], pad=False, lead=d.clip_lead(False, "normal"))
+    assert abs(d.TAIL + later["starts"][0] - d.GAPS["normal"]) < 1e-6     # across a clip cut the turn keeps its gap
+    final = d.clip_end(tight, 10.0, 30, 1.7)
+    assert abs(final - (tight["ends"][-1] + 1.7)) <= 1 / 30               # the last clip holds for the pull-back
 
 
 def test_scene_is_valid_with_a_cut_per_line_and_mouths_per_speaker():
@@ -144,12 +215,20 @@ def test_scene_is_valid_with_a_cut_per_line_and_mouths_per_speaker():
     cams = scene["camera"]
     assert len(cams) == 5 and all(k["cut"] for k in cams) and cams[0]["t"] == 0
     assert all(b["t"] > a["t"] for a, b in zip(cams, cams[1:]))
-    assert cams[4]["t"] <= timing["ends"][3] + 0.06                      # a beat cuts to the responder's look early
+    for k in (1, 2, 3):                                                 # the cut lands 0.15 s before the speaker's first word
+        assert abs(cams[k]["t"] - (timing["starts"][k] - d.CUT_LEAD)) < 1e-3
+    assert cams[4]["t"] <= timing["ends"][3] + 0.34                      # a beat cuts to the responder's look early
     a, b = scene["actors"]
     assert {"t": round(timing["ends"][3], 3), "expr": "skeptical"} in a["face"]
-    assert a["kind"] == "chibi" and b["kind"] == "mascot" and scene["style"] == "night"
+    assert a["kind"] == "chibi" and b["kind"] == "mascot" and scene["style"] == "night" and scene["handheld"] == 0
+    assert "mouth" not in b and b["appearance"]["mouth"] is False        # the AI acts with its eyes (reference style)
+    talking = d.build_scene(plan, timing, CAST, mouths, 24, 720, 1280, 10.0, seed=3, quality="high", mascot_mouth=True)
+    a, b = talking["actors"]
     f = int(timing["starts"][1] * 24) + 2                               # mascot's line: only its mouth moves
     assert b["mouth"]["values"][f] > 0 and a["mouth"]["values"][f] == 0
+    final = d.build_scene(plan, timing, CAST, mouths, 24, 720, 1280, timing["ends"][-1] + 1.7, seed=3, quality="high", final=True)
+    hold, back = final["camera"][-2:]                                   # the last shot holds, then pulls back
+    assert hold["t"] == timing["ends"][-1] and back["pos"][2] > hold["pos"][2] and not back.get("cut")
     assert scene["transition"] == {"in": "none", "out": "none"}
 
 
@@ -221,6 +300,9 @@ def test_sound_bed_ducks_under_the_voice(tmp_path):
     x = array.array("h", raw)
     rms = lambda t0, t1: (sum(v * v for v in x[int(t0 * 8000):int(t1 * 8000)]) / max(1, int((t1 - t0) * 8000))) ** 0.5  # noqa: E731
     assert rms(1.0, 2.5) > 20                                           # the bed plays in the gaps
+    for bed in ("rain", "city"):                                        # the window looks' ambiences render too
+        o = st.add_bed(video, tmp_path / f"{bed}.mp4", bed, -24)
+        assert abs(probe(o)["duration"] - 6.0) < 0.1
     with pytest.raises(FileNotFoundError):
         st.add_bed(video, tmp_path / "x.mp4", str(tmp_path / "missing.mp3"), -24)
 

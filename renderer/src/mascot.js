@@ -1,11 +1,12 @@
-// A small mascot character (the "AI" in dialogue shorts): a faceted, lobed body with two rectangle eyes and
-// stubby feet. It has no mouth: it talks by squashing and bobbing with its voice, and its eyes carry the
-// expression. Pure in t, like the stick figure. Same interface as Stickman for the main loop:
-// group, update(spec, t, ctx), headWorld(), headY, size, hands (none), mat.
+// A small mascot character (an "AI" in dialogue shorts): a faceted body on stubby feet whose eyes carry the
+// expression. Shapes: a lobed flower/star/blob/bean, a dark cube with glowing eyes, or a gradient cloud with a
+// ">_" prompt for a face. An optional small mouth opens with its voice (appearance.mouth). Pure in t, like the
+// stick figure. Same interface as Stickman for the main loop: group, update(spec, t, ctx), headWorld(), headY,
+// size, hands (none), mat.
 import * as THREE from "three";
 import { clamp, ease, hash, lerp, noise1, stepFade } from "./util.js";
 
-export const MASCOT_SHAPES = ["flower", "star", "blob", "bean"];
+export const MASCOT_SHAPES = ["flower", "star", "blob", "bean", "cube", "cloud"];
 
 // eye shape per expression: height, width, vertical offset, tilt (radians, inner corners down when > 0)
 const EYES = {
@@ -17,12 +18,15 @@ const EYES = {
   confused: { h: 0.85, w: 1, y: 0, tilt: 0.2 },
   thinking: { h: 0.75, w: 1, y: 0.2, tilt: 0 },
   skeptical: { h: 0.32, w: 1.1, y: 0, tilt: 0 },   // flat slits: the deadpan look
+  caught: { h: 0.4, w: 1.0, y: 0.04, tilt: 0 },     // small squares: unsure, caught out
+  content: { h: 0.16, w: 1.15, y: 0.12, tilt: 0 },  // nearly shut: pleased
+  embarrassed: { h: 0.55, w: 0.95, y: -0.08, tilt: -0.2 },
 };
 
 function lobedGeometry(shape, R) {
   const g = new THREE.IcosahedronGeometry(1, 3);
   const p = g.attributes.position;
-  const lobes = { flower: [6, 0.13], star: [5, 0.2], blob: [0, 0], bean: [0, 0] }[shape] ?? [6, 0.13];
+  const lobes = { flower: [6, 0.13], star: [5, 0.2], blob: [0, 0], bean: [0, 0], cloud: [0, 0] }[shape] ?? [6, 0.13];
   for (let i = 0; i < p.count; i++) {
     let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
     const phi = Math.atan2(y, x);
@@ -30,6 +34,11 @@ function lobedGeometry(shape, R) {
     const f = 1 + lobes[1] * Math.cos(lobes[0] * phi + Math.PI / 2) * rim;
     x *= f; y *= f;
     if (shape === "bean") { x *= 0.85; y *= 1.18; }
+    if (shape === "cloud") {
+      // puffs along the top and the sides, a flatter base
+      const puff = 1 + 0.1 * Math.max(0, Math.cos(3 * phi - 0.3)) * (y > -0.2 ? 1 : 0.3) + 0.06 * Math.cos(5 * phi);
+      x *= 1.22 * puff; y *= (y < 0 ? 0.78 : 0.95) * puff;
+    }
     p.setXYZ(i, x * R, y * R, z * R * 0.78);
   }
   g.computeVertexNormals();
@@ -41,27 +50,72 @@ export class Mascot {
     const ap = { color: "#e8743c", eyes: "#141012", shape: "flower", ...(opts.appearance ?? {}) };
     this.opts = { seed: 1, ...opts };
     this.R = 0.13 * (ap.scale ?? 1);
+    this.shape = ap.shape;
     this.group = new THREE.Group();
     this.body = new THREE.Group();          // bobs and squashes above the planted feet
     this.group.add(this.body);
     this.mat = new THREE.MeshStandardMaterial({ color: ap.color, roughness: 0.55, metalness: 0, flatShading: true });
     const R = this.R;
-    const blob = new THREE.Mesh(lobedGeometry(ap.shape, R), this.mat);
-    blob.castShadow = true;
-    blob.position.y = R * 1.18;
-    this.body.add(blob);
-    const eyeMat = new THREE.MeshStandardMaterial({ color: ap.eyes, roughness: 0.35 });
+    let front = R * 0.79;                   // where the face sits (z)
+    if (ap.shape === "cube") {
+      // a dark box on two round feet; its eyes are lit screens
+      this.mat = new THREE.MeshStandardMaterial({ color: ap.color, roughness: 0.45, metalness: 0.1, flatShading: true });
+      const box = new THREE.Mesh(new THREE.BoxGeometry(R * 1.9, R * 1.65, R * 1.6), this.mat);
+      box.castShadow = true;
+      box.position.y = R * 1.15;
+      this.body.add(box);
+      front = R * 0.81;
+    } else {
+      const geo = lobedGeometry(ap.shape, R);
+      if (ap.shape === "cloud") {
+        // a left-to-right gradient (blue to purple) in vertex colours
+        const c0 = new THREE.Color(ap.color ?? "#3f63f2"), c1 = new THREE.Color(ap.color2 ?? "#8b3fd8");
+        const pa = geo.attributes.position, cols = [];
+        for (let i = 0; i < pa.count; i++) {
+          const c = c0.clone().lerp(c1, Math.min(1, Math.max(0, pa.getX(i) / (R * 2.4) + 0.5)));
+          cols.push(c.r, c.g, c.b);
+        }
+        geo.setAttribute("color", new THREE.Float32BufferAttribute(cols, 3));
+        this.mat = new THREE.MeshStandardMaterial({ color: "#ffffff", vertexColors: true, roughness: 0.5, metalness: 0, flatShading: true });
+      }
+      const blob = new THREE.Mesh(geo, this.mat);
+      blob.castShadow = true;
+      blob.position.y = R * 1.18;
+      this.body.add(blob);
+    }
+    this.front = front;
+    const glow = ap.shape === "cube" || ap.glow;
+    const eyeMat = glow ? new THREE.MeshBasicMaterial({ color: new THREE.Color(ap.eyes === "#141012" ? "#ffffff" : ap.eyes).multiplyScalar(1.6), toneMapped: false })
+      : new THREE.MeshStandardMaterial({ color: ap.eyes, roughness: 0.35 });
+    const eyeScale = ap.shape === "cube" ? 1.3 : 1;
     this.eyes = [-1, 1].map((sx) => {
-      const e = new THREE.Mesh(new THREE.BoxGeometry(R * 0.17, R * 0.42, R * 0.08), eyeMat);
+      const e = new THREE.Mesh(new THREE.BoxGeometry(R * 0.17 * eyeScale, R * 0.42 * eyeScale, R * 0.08), eyeMat);
       e.userData.sx = sx;
       this.body.add(e);
       return e;
     });
-    // a small mouth under the eyes: a closed line when quiet, opening with the voice (lip sync)
-    this.mouth = new THREE.Mesh(new THREE.BoxGeometry(R * 0.2, R * 0.028, R * 0.06), new THREE.MeshStandardMaterial({ color: "#3a120c", roughness: 0.5 }));
+    // a cloud wears a terminal prompt ">_" for a face instead of eyes
+    this.glyph = null;
+    if (ap.shape === "cloud" || ap.glyph) {
+      for (const e of this.eyes) e.visible = false;
+      const gm = new THREE.MeshBasicMaterial({ color: "#ffffff", toneMapped: false });
+      const g = new THREE.Group();
+      const bar = (w, h, x, y, rz) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, R * 0.06), gm); m.position.set(x, y, 0); m.rotation.z = rz; g.add(m); };
+      bar(R * 0.32, R * 0.07, -R * 0.2, R * 0.09, -0.62);
+      bar(R * 0.32, R * 0.07, -R * 0.2, -R * 0.09, 0.62);
+      bar(R * 0.34, R * 0.07, R * 0.26, -R * 0.17, 0);
+      this.glyph = g;
+      this.body.add(g);
+    }
+    // a small mouth under the eyes: a closed line when quiet, opening with the voice (lip sync); off when
+    // appearance.mouth is false (the mascot then acts with its eyes only)
+    this.mouth = new THREE.Mesh(new THREE.BoxGeometry(R * 0.2, R * 0.028, R * 0.06), new THREE.MeshStandardMaterial({ color: ap.shape === "cube" ? "#d8f0ff" : "#3a120c", roughness: 0.5 }));
+    this.mouth.visible = ap.mouth !== false && !this.glyph;
     this.body.add(this.mouth);
+    const footMat = ap.shape === "cube" ? new THREE.MeshStandardMaterial({ color: "#0d0e11", roughness: 0.5, flatShading: true })
+      : ap.shape === "cloud" ? new THREE.MeshStandardMaterial({ color: ap.feet ?? "#2a2f8f", roughness: 0.5, flatShading: true }) : this.mat;
     this.feet = [-1, 1].map((sx) => {
-      const f = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 0.3, 1), this.mat);
+      const f = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 0.3, 1), footMat);
       f.scale.set(1.05, 0.62, 1.15);
       f.position.set(sx * R * 0.42, R * 0.15, R * 0.12);
       f.castShadow = true;
@@ -133,15 +187,19 @@ export class Mascot {
     this.body.rotation.set((0.04 * en - 0.03 * hop) * move, (yaw + noise1(t * 0.3, seed) * 0.05) * move, noise1(t * 0.25, seed + 4) * 0.03 * move);
     // mouth: opens with the voice of this frame (lightly smoothed), wider for a big sound
     const open = clamp((this._speak(actor, t) + this._speak(actor, t - 1 / 30)) / 2);
-    this.mouth.position.set(0, R * (0.97 + 0.18 * e.y * 0.3), R * 0.8);
+    this.mouth.position.set(0, R * (0.97 + 0.18 * e.y * 0.3), this.front + R * 0.01);
     this.mouth.scale.set(1 + 0.3 * open, 1 + 7 * open, 1);
     // eyes on the front surface
     const eyeY = R * (1.24 + 0.18 * e.y), gap = R * 0.24;
     for (const eye of this.eyes) {
       const sx = eye.userData.sx;
-      eye.position.set(sx * gap, eyeY, R * 0.79);
+      eye.position.set(sx * gap * (this.shape === "cube" ? 1.25 : 1), eyeY, this.front);
       eye.scale.set(e.w, Math.max(0.06, e.h * blink), 1);
       eye.rotation.set(0, 0, sx * e.tilt * 0.5);
+    }
+    if (this.glyph) {
+      this.glyph.position.set(0, R * (1.2 + 0.1 * e.y), R * 0.8);
+      this.glyph.scale.set(1, Math.max(0.15, Math.min(1.2, e.h * blink)), 1);
     }
   }
 

@@ -145,6 +145,7 @@ export default function Settings() {
           <label className="text-sm">Max voice speed-up to fit a clip<input className="input" type="number" min={1} max={1.6} step={0.05} value={s.voice.max_speedup} onChange={(e) => set(["voice", "max_speedup"], Number(e.target.value))} /></label>
         </div>
       </Section>
+      {s.research && <ResearchSettings s={s} set={set} />}
       <Section title="Dialogue shorts">
         <div className="grid gap-3 md:grid-cols-4" data-testid="dialogue-settings">
           <label className="text-sm">Set<select className="input" value={s.dialogue.set ?? "auto"} onChange={(e) => set(["dialogue", "set"], e.target.value)} data-testid="dialogue-set">
@@ -269,6 +270,41 @@ function LocalServices() {
             {st.whisper?.installed ? `faster-whisper on ${st.whisper.device}` : "estimated timing"}</Row>
         </ul>
       )}
+    </Section>
+  );
+}
+
+/** Live topic research: which public sources to read, what to search, how far back; and a check from this machine. */
+function ResearchSettings({ s, set }: { s: any; set: (path: string[], v: any) => void }) {
+  const r = s.research;
+  const [chk, setChk] = useState<any>(null);
+  const list = (key: string, label: string, hint: string, sep: "," | "\n" = ",") => (
+    <label className="text-sm">{label}
+      {sep === "," ? <input className="input" value={(r[key] ?? []).join(", ")} onChange={(e) => set(["research", key], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} title={hint} />
+        : <textarea className="input min-h-[96px] font-mono text-xs" value={(r[key] ?? []).join("\n")} onChange={(e) => set(["research", key], e.target.value.split("\n").map((x) => x.trim()).filter(Boolean))} title={hint} />}
+    </label>);
+  const check = async () => { setChk({ busy: true }); try { setChk(await api.get("/research/check")); } catch (e: any) { setChk({ error: e.message }); } };
+  return (
+    <Section title="Research (live AI news)">
+      <div className="grid gap-3 md:grid-cols-3" data-testid="research-settings">
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={r.live ?? true} onChange={(e) => set(["research", "live"], e.target.checked)} data-testid="research-live" />Research live news before topics</label>
+        <label className="text-sm">Look back (days)<input className="input" type="number" min={1} max={90} value={r.days ?? 14} onChange={(e) => set(["research", "days"], Number(e.target.value))} /></label>
+        <label className="text-sm">Items to keep<input className="input" type="number" min={10} max={200} value={r.max_items ?? 60} onChange={(e) => set(["research", "max_items"], Number(e.target.value))} /></label>
+        <div className="flex flex-wrap gap-3 text-sm md:col-span-3">{[["hackernews", "Hacker News"], ["reddit", "Reddit"], ["github", "GitHub issues"], ["feeds", "Status pages and blogs"]].map(([k, l]) => (
+          <label key={k} className="flex items-center gap-1.5"><input type="checkbox" checked={r.sources?.[k] ?? true} onChange={(e) => set(["research", "sources", k], e.target.checked)} />{l}</label>))}</div>
+        {list("hn_queries", "Hacker News searches", "used when no topic brief is given")}
+        {list("subreddits", "Subreddits", "names without r/")}
+        {list("github_repos", "GitHub repos (owner/name): their issues are real user problems", "public repos")}
+        <div className="md:col-span-2">{list("feeds", "Feeds (RSS/Atom, one per line): status pages read as outages, blogs as updates", "", "\n")}</div>
+        <div className="grid content-start gap-2">
+          <button className="btn" type="button" onClick={check} data-testid="research-check">Check sources</button>
+          {chk?.busy && <span className="text-xs text-ink-3">Asking each source…</span>}
+          {chk?.error && <span className="text-xs" style={{ color: "var(--critical)" }}>{chk.error}</span>}
+          {chk?.sources && <ul className="text-xs">{Object.entries(chk.sources).map(([k, v]: any) => (
+            <li key={k}>{v.ok ? "✓" : "✕"} {k}{v.ok ? ` (${v.count})` : `: ${v.error}`}</li>))}</ul>}
+        </div>
+        <p className="text-xs text-ink-3 md:col-span-3">Public sources only, nothing behind a login; authors' names are never kept. Optional: a GitHub token with no scopes in .env (GITHUB_TOKEN) lifts GitHub's search limit. Real facts a script uses are listed under Package → Claims to verify, with their links.</p>
+      </div>
     </Section>
   );
 }

@@ -110,7 +110,21 @@ SAMPLE_TOPICS = [
 ]
 
 
-def topic_candidates(niche: str, subtopics: list, outliers: list, profile_summary: list, n: int = 8) -> dict:
+def research_queries(brief: str, niche: str) -> dict:
+    """Dry run: the brief's longest words as queries."""
+    words = sorted(set(re.findall(r"[A-Za-z]{4,}", brief)), key=len, reverse=True)[:3] or ["AI"]
+    return {**FIX, "queries": words, "tools": [t for t in ("Claude", "ChatGPT", "Gemini", "Codex") if t.lower() in brief.lower()]}
+
+
+def topic_candidates(niche: str, subtopics: list, outliers: list, profile_summary: list, n: int = 8,
+                     news: list | None = None, brief: str = "") -> dict:
+    if news and not _is_sample(niche):
+        # dry run with (synthetic) news: one candidate per top item, grounded in it
+        cands = [{"id": f"n{k + 1}", "title": it["title"][:70], "angle": f"dry-run: the funny side of '{it['title'][:50]}'",
+                  "keywords": sorted(set(re.findall(r"[a-z]{4,}", it["title"].lower())))[:5], "stickman_fit": 4,
+                  "stickman_reason": "dry-run: a desk scene", "niche_rating": 4, "demand_note": "dry-run",
+                  "news_ids": [it["id"]], "story": f"dry-run (synthetic): {it['title']}"} for k, it in enumerate(news[:n])]
+        return {**FIX, "candidates": cands}
     if _is_sample(niche):
         cands = [{"id": i, "title": t, "angle": a, "keywords": kw, "stickman_fit": fit, "stickman_reason": why,
                   "niche_rating": nr, "demand_note": "dry-run: see related synthetic outliers on the board"}

@@ -8,7 +8,7 @@ packages it.
 `projects/<slug>/` plus copy blocks in the UI. You publish by hand.
 
 ```
-Niche → Discover → Patterns ("why it worked") → Topics ⏸ → Hooks ⏸ → Script → Phase A ⏸ → Phase B
+Niche → AI news → Discover → Patterns ("why it worked") → Topics ⏸ → Hooks ⏸ → Script → Phase A ⏸ → Phase B
       → Render ⏸(cost) → Stitch → Package          … you publish … → Learn → (next video's beats move)
 ```
 
@@ -124,16 +124,36 @@ The Discover log shows the units each run uses.
 1. **Niche**: niche, sub-topics, platforms, style (1–5), theme, ratio, duration, competitors. Paste
    transcripts of three of your own videos to draft `config/voice/youtube.md` and
    `config/voice/instagram.md`. You review and apply the drafts; every yt-*/ig-* skill reads these files.
-2. **Run pipeline** (top bar). Each stage cell shows status and progress. Click a cell to open its
+   Optional **Base topic**: describe what the video should be about in your own words; the live research searches
+   for it and every suggested topic is about it.
+2. **Live AI news** (the second stage, shown on the Topics screen): what is actually happening with Claude,
+   ChatGPT, Codex, Gemini, Cursor, Copilot and co. in the last 14 days, from public sources only (no login):
+   - **Hacker News** (launches, long discussions), **Reddit** public listings (r/ClaudeAI, r/ChatGPT, ...: what
+     users run into), **GitHub issues** on anthropics/claude-code, openai/codex and google-gemini/gemini-cli (real
+     bugs; reactions show how many hit them), and **status pages and blogs** (outages, updates).
+   - Each item is tagged problem, update, outage or discussion, with the tools it mentions, its date, its
+     reactions and its link; authors' names are never kept. They are ranked by reactions, freshness and your
+     brief.
+   - **Topics** are then built from these real posts: each card says *what really happened* and links the posts
+     it grows from, and scores higher the more people reacted. Hooks and scripts get the story with a rule: build
+     the joke from the real situation, keep the facts as the sources state them, list them (with links) under
+     Package → Claims to verify, and never name or quote the people who posted.
+   - **Research a topic** (Topics screen): type what you want ("AI that says it fixed the bug but didn't",
+     "this week's usage limits") and press **Research this**: it searches for it, then finds topics about it.
+     Works before Discover has run.
+   - Settings → **Research**: on/off, look-back days, which sources, the searches, subreddits, repos and feeds,
+     and **Check sources** (which ones answer from your machine; a site that blocks the request is skipped, never
+     fatal). Optional `GITHUB_TOKEN` in `.env` (no scopes) lifts GitHub's search limit.
+3. **Run pipeline** (top bar). Each stage cell shows status and progress. Click a cell to open its
    screen. The live log is at the bottom.
-3. **Gates** appear as orange panels with Approve / Reject, plus a note field.
+4. **Gates** appear as orange panels with Approve / Reject, plus a note field.
    - **Topic** and **Hook**: click a card, then approve.
    - **Phase A**: edit the text if you like, then approve. Approval is tied to the exact text, so editing
      re-opens the gate. A rejection note feeds the director's next revision.
    - **Render cost**: shows the estimate and your budget cap.
-4. **Render**: a per-clip grid and **Regenerate this clip only**. Stitch builds `final/final.mp4` with
+5. **Render**: a per-clip grid and **Regenerate this clip only**. Stitch builds `final/final.mp4` with
    burned-in captions, the hook card, and loudness normalised to −16 LUFS.
-5. **Package**: titles linted as title + thumbnail pairs, description, tags, chapters (long-form,
+6. **Package**: titles linted as title + thumbnail pairs, description, tags, chapters (long-form,
    60 s and over only), Instagram caption with lint, a **pinned comment** to post after publishing, a
    **cover image prompt** sized to the project's ratio (9:16 Shorts/Reels cover or 16:9 thumbnail), claims to
    verify, and policy notes. Each block has its own copy button. The description, pinned comment, cover prompt
@@ -141,7 +161,7 @@ The Discover log shows the units each run uses.
    block. The writer gets the real video length and the actual script, so it can't invent a length; links,
    placeholder URLs and timestamps a short can't have are removed, and a stated length that isn't in the
    script is flagged under the description.
-6. **Learn**: after you publish, upload the YouTube Studio retention CSV and/or paste Instagram
+7. **Learn**: after you publish, upload the YouTube Studio retention CSV and/or paste Instagram
    insights. Findings shift the niche profile, so the next video's beats move.
 
 Every stage is a separate job and can be re-run on its own. Downstream stages then show **stale**.
@@ -483,6 +503,7 @@ more between clips than Omni.
 | Stage | Vendored skill (via Claude Agent SDK) | Pack tool (run directly) | Output |
 |---|---|---|---|
 | Niche | `yt-script` / `ig-reel` voice step | — | `research/voice-draft-*.md` |
+| AI news | — (a short query-writing call when you give a brief) | Hacker News Algolia API, Reddit public JSON, GitHub issue search, RSS/Atom feeds (`backend/app/sources/news.py`) | `research/news.json` |
 | Discover | `yt-viral`, `ig-viral` (interpretation) | `yt-viral/swipe.py`, `ig-viral/swipe.py`; YouTube Data API; `yt-dlp` captions | `research/discovery.json`, `swipe.md`, `transcripts/` |
 | Patterns | (Sonnet labeler on blueprint questions) | blueprint regex labeler, `yt-script/hookscore.py`, `ig-reel/hookscore.py` | `research/patterns/*.json`, `niche-profile.json` |
 | Topics | `yt-viral`, `ig-viral` | topic scorer | `research/topics.json` |

@@ -17,7 +17,8 @@ from dotenv import dotenv_values
 
 from .paths import CONFIG, REPO_ROOT
 
-SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FAL_KEY", "YOUTUBE_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY")
+SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FAL_KEY", "YOUTUBE_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY",
+                "GITHUB_TOKEN")
 SETTINGS_FILE = Path(os.environ.get("VSS_SETTINGS_FILE") or CONFIG / "settings.json")
 PRICING_FILE = CONFIG / "pricing.json"
 
@@ -99,6 +100,17 @@ DEFAULTS: dict[str, Any] = {
                  # punch_up: after the script passes its checks, one more writer pass (the joke-engineering skill)
                  # sharpens only the weak jokes; off saves a model call (and tokens on Groq's free plan)
                  "punch_up": True},
+    # live topic research (the News stage): public sources only, no login. days = how far back; feeds are RSS/Atom
+    # (status pages read as outages, blogs and changelogs as updates). GITHUB_TOKEN in .env (optional, read-only, no
+    # scopes needed) lifts GitHub's search limit from 10 to 30 requests a minute.
+    "research": {"live": True, "days": 14, "max_items": 60,
+                 "sources": {"hackernews": True, "reddit": True, "github": True, "feeds": True},
+                 "hn_queries": ["Claude", "Claude Code", "Codex", "ChatGPT", "Gemini", "Cursor", "Copilot"],
+                 "subreddits": ["ClaudeAI", "ChatGPT", "OpenAI", "GeminiAI", "cursor", "ChatGPTCoding", "LocalLLaMA"],
+                 "github_repos": ["anthropics/claude-code", "openai/codex", "google-gemini/gemini-cli"],
+                 "feeds": ["https://status.anthropic.com/history.rss", "https://status.openai.com/feed.rss",
+                           "https://www.githubstatus.com/history.rss", "https://openai.com/news/rss.xml",
+                           "https://blog.google/technology/ai/rss/", "https://github.blog/changelog/feed/"]},
     "agent": {
         # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
         # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
@@ -199,6 +211,13 @@ def validate_settings(s: dict[str, Any]) -> None:
         raise ValueError("dialogue fps must be 24, 25 or 30")
     if not -24 <= float(d.get("lufs", -15)) <= -9:
         raise ValueError("dialogue loudness must be between -24 and -9 LUFS")
+    r = s.get("research") or {}
+    if not 1 <= int(r.get("days", 14)) <= 90:
+        raise ValueError("research look-back must be 1-90 days")
+    if not all(str(u).startswith(("https://", "http://")) for u in r.get("feeds") or []):
+        raise ValueError("research feeds must be http(s) URLs")
+    if not all(re.fullmatch(r"[\w.-]+/[\w.-]+", str(x)) for x in r.get("github_repos") or []):
+        raise ValueError("GitHub repos are owner/name")
     if not isinstance(d.get("punch_up", True), bool):
         raise ValueError("dialogue punch-up must be on or off")
     if not 0 <= float(d.get("end_hold", 1.7)) <= 4:

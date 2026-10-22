@@ -70,6 +70,7 @@ class ProjectIn(BaseModel):
     voice_transcripts: dict[str, list[str]] = Field(default_factory=lambda: {"youtube": [], "instagram": []})
     format: str = "narrated"      # "narrated" (stickman explainer) | "dialogue" (two-character dialogue short)
     cast: dict | None = None      # dialogue: {"a": {...}, "b": {...}} over the defaults
+    topic_brief: str = ""         # optional: what the video should be about, in your words (steers live research)
 
 
 class GateDecision(BaseModel):
@@ -327,6 +328,34 @@ async def run_stage(slug: str, stage_name: str, body: RunIn) -> dict:
         raise HTTPException(409, "the pipeline is running; stop it or wait")
     job_id, _ = manager.submit(slug, stage_name, body.params)
     return {"job_id": job_id}
+
+
+@app.post("/api/projects/{slug}/research")
+async def research_brief(slug: str, body: dict) -> dict:
+    """Research a topic you describe: save it as the project's topic brief, then run the News stage (live sources,
+    searched for it) and Topics (candidates about it, grounded in what was found)."""
+    p = _project_or_404(slug)
+    if pipeline.is_running(slug):
+        raise HTTPException(409, "the pipeline is running; stop it or wait")
+    brief = str(body.get("brief", "")).strip()[:600]
+    data = {**p["data"], "topic_brief": brief}
+    db.upsert_project(slug, p["name"], data)
+    _write_project_json(slug, data)
+    job_id, fut = manager.submit(slug, "news", {"brief": brief})
+
+    async def then_topics() -> None:
+        if await fut == "succeeded":
+            manager.submit(slug, "topics", {"brief": brief})
+    asyncio.create_task(then_topics())
+    return {"job_id": job_id, "brief": brief}
+
+
+@app.get("/api/research/check")
+async def research_check() -> dict:
+    """One small request per live source, from this machine: which ones answer."""
+    from .settings import secret
+    from .sources import news as news_src
+    return {"sources": await asyncio.to_thread(news_src.check, load_settings().get("research") or {}, None, secret("GITHUB_TOKEN"))}
 
 
 @app.post("/api/projects/{slug}/clips/{n}/regenerate")

@@ -90,3 +90,26 @@ def transcript(video_index: int, duration: float, seed: int = 3) -> list[tuple[f
     hook_word = cues[0][2].split()[-1].strip(".?!").lower()
     cues.append((round(min(t, duration - 2.4), 2), round(duration - 0.2, 2), f"Remember the {hook_word}."))
     return cues
+
+
+NEWS = [("problem", "reddit", "r/ClaudeAI", "Hit my usage limit again before lunch", 840, 210),
+        ("problem", "github", "anthropics/claude-code", "Agent deletes test files instead of fixing the failing test", 120, 45),
+        ("update", "hackernews", "Hacker News", "New coding model release: faster, cheaper, longer context", 610, 380),
+        ("outage", "feed", "Status page (synthetic)", "Elevated error rates on chat completions", 0, 0),
+        ("problem", "reddit", "r/ChatGPT", "It keeps saying 'you're absolutely right' and changes nothing", 1520, 330),
+        ("discussion", "hackernews", "Hacker News", "Ask: how do you stop an AI from over-engineering a simple fix?", 290, 240),
+        ("problem", "reddit", "r/GeminiAI", "Asked for one function, got a whole framework", 430, 95)]
+
+
+def news_items(days: int = 14) -> list[dict]:
+    """SYNTHETIC live-news items for dry runs (every one says so in its URL and its `synthetic` flag)."""
+    import datetime as dt
+    now = dt.datetime.now(dt.timezone.utc)
+    out = []
+    for k, (kind, src, where, title, eng, com) in enumerate(NEWS):
+        out.append({"id": f"syn-{k + 1}", "source": src, "where": where, "title": title,
+                    "url": f"https://synthetic.invalid/news/{k + 1}", "discussion_url": f"https://synthetic.invalid/news/{k + 1}",
+                    "text": "SYNTHETIC item for a dry run, not a real post.", "kind": kind, "engagement": eng, "comments": com,
+                    "date": (now - dt.timedelta(days=k % max(1, days))).isoformat(timespec="minutes"),
+                    "tools": [], "score": round(1 - k / 10, 3), "age_days": float(k % max(1, days)), "synthetic": True})
+    return out

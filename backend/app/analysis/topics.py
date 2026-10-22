@@ -1,6 +1,7 @@
 """Topic scorer: a pure function over evidence features, so every score on the board is explainable.
 
-score = w_outlier * outlier_evidence + w_gap * gap + w_fit * stickman_fit + w_niche * niche_fit
+score = w_outlier * outlier_evidence + w_gap * gap + w_fit * stickman_fit + w_niche * niche_fit + w_news * news
+(news: how strongly the topic's real items were reacted to and how fresh they are, against the best item found)
 Each component is in [0, 1]. Weights come from config/settings.json (topic_weights).
 """
 from __future__ import annotations
@@ -9,7 +10,7 @@ import math
 import re
 from typing import Any
 
-DEFAULT_WEIGHTS = {"outlier_evidence": 0.35, "gap": 0.25, "stickman_fit": 0.20, "niche_fit": 0.20}
+DEFAULT_WEIGHTS = {"outlier_evidence": 0.35, "gap": 0.25, "stickman_fit": 0.20, "niche_fit": 0.20, "news": 0.30}
 STOP = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "your", "you", "why", "how",
         "what", "is", "are", "this", "that", "it", "my", "i", "do", "does", "vs", "about", "from", "most"}
 
@@ -55,12 +56,22 @@ def stickman_fit(rating_1_to_5: float) -> float:
 
 def score(components: dict[str, float], weights: dict[str, float] | None = None) -> float:
     w = {**DEFAULT_WEIGHTS, **(weights or {})}
-    total = sum(w.values()) or 1.0
-    return round(sum(w[k] * float(components.get(k, 0.0)) for k in DEFAULT_WEIGHTS) / total, 4)
+    keys = [k for k in DEFAULT_WEIGHTS if k in components]     # no live news: the news weight does not count
+    total = sum(w[k] for k in keys) or 1.0
+    return round(sum(w[k] * float(components[k]) for k in keys) / total, 4)
+
+
+def news_strength(news_ids: list[str], news: list[dict]) -> float:
+    """The best of the topic's real items, against the best item found (0 when it rests on none)."""
+    by_id = {n["id"]: n for n in news}
+    top = max((float(n.get("score") or 0) for n in news), default=0.0)
+    mine = [float(by_id[i].get("score") or 0) for i in news_ids or [] if i in by_id]
+    return round(max(mine) / top, 3) if mine and top else 0.0
 
 
 def score_candidates(candidates: list[dict], swipe: list[dict], niche_text: str,
-                     weights: dict[str, float] | None = None, min_multiple: float = 1.5) -> list[dict]:
+                     weights: dict[str, float] | None = None, min_multiple: float = 1.5,
+                     news: list[dict] | None = None) -> list[dict]:
     """candidates: [{id, title, angle, keywords?, stickman_fit (1-5), stickman_reason, niche_rating?}]
     swipe: [{title|hook, multiple, views, ...}] from discovery."""
     niche_kw = keywords(niche_text)
@@ -78,6 +89,13 @@ def score_candidates(candidates: list[dict], swipe: list[dict], niche_text: str,
             "stickman_fit": stickman_fit(c.get("stickman_fit", 3)),
             "niche_fit": niche_fit(kw, niche_kw, c.get("niche_rating")),
         }
+        if news:
+            comp["news"] = news_strength(c.get("news_ids") or [], news)
+        by_id = {n["id"]: n for n in news or []}
+        srcs = [by_id[i] for i in c.get("news_ids") or [] if i in by_id]
+        if srcs:                                      # the real posts the topic grows from, for the script and the board
+            c = {**c, "sources": [{k: n.get(k) for k in ("id", "title", "url", "discussion_url", "where", "kind", "date",
+                                                          "engagement", "comments", "synthetic")} for n in srcs]}
         out.append({**c, "components": comp, "score": score(comp, weights),
                     "evidence": [{"title": s.get("title") or s.get("hook"), "multiple": s.get("multiple"),
                                   "views": s.get("views"), "url": s.get("url"), "platform": s.get("platform"),

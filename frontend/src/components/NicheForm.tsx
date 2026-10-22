@@ -29,6 +29,10 @@ export function NicheForm({ initial, submitLabel, onSubmit, busy }: {
         <div><label className="label">Niche</label><input className="input" required value={d.niche} onChange={(e) => set("niche", e.target.value)} data-testid="f-niche" placeholder="e.g. personal finance psychology" /></div>
         <div className="md:col-span-2"><label className="label">Sub-topics (comma separated)</label>
           <input className="input" value={d.subtopics.join(", ")} onChange={(e) => set("subtopics", e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></div>
+        <div className="md:col-span-2"><label className="label">Base topic (optional): describe what this video should be about</label>
+          <textarea className="input min-h-[64px]" value={d.topic_brief ?? ""} onChange={(e) => set("topic_brief", e.target.value)} data-testid="f-brief"
+            placeholder="e.g. AI agents that 'fix' a failing test by deleting it; or this week's usage-limit complaints" />
+          <p className="mt-1 text-xs text-ink-3">The AI news research searches for this, and every topic it suggests is about it. Leave empty to research what is happening across AI tools.</p></div>
       </div>
       <div className="grid gap-4 md:grid-cols-4">
         <div className="md:col-span-2"><label className="label">Video format</label>

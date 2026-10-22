@@ -58,7 +58,8 @@ export interface Pipeline {
 export interface ProjectData {
   name: string; niche: string; subtopics: string[]; platforms: string[]; style: string; theme: string; ratio: string;
   duration: number; competitors: { youtube: string[]; instagram: string[] }; voice_pref: string;
-  voice_transcripts: { youtube: string[]; instagram: string[] }; format?: "narrated" | "dialogue"; cast?: any; [k: string]: any;
+  voice_transcripts: { youtube: string[]; instagram: string[] }; format?: "narrated" | "dialogue"; cast?: any;
+  topic_brief?: string; [k: string]: any;
 }
 export interface Snapshot {
   project: { slug: string; name: string; created_at: number; data: ProjectData };

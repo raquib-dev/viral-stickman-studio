@@ -83,8 +83,38 @@ TRANSCRIPT:
 
 # ---- topics ---------------------------------------------------------------------------------
 
+def research_queries(brief: str, niche: str) -> AgentTask:
+    """Turn the creator's topic description into short search queries for the live sources."""
+    prompt = f"""The creator wants a video about this (their words): {brief}
+Niche: {niche}
+
+Write 3-5 short web search queries (1-4 words each, the words people actually use in posts and bug reports) that would
+find recent real posts, bug reports, launches and discussions about it on Hacker News, Reddit and GitHub. Include the
+AI tool names when the description names or implies them (Claude, Claude Code, ChatGPT, Codex, Gemini, Cursor,
+Copilot). Return {{"queries": [...], "tools": [...]}}."""
+    return AgentTask("research_queries", prompt, _obj({"queries": _arr(STR, 1), "tools": _arr(STR)}), [], "research",
+                     {"brief": brief, "niche": niche})
+
+
+NEWS_RULE = """REAL STORY: this topic comes from real posts (see `story` and `sources` in TOPIC). Build the joke from that real
+situation, so viewers who saw it nod. Keep every real-world fact as the sources state it (what broke, what launched,
+when); list each one you use in `claims_to_source` with its source URL. Never name, quote or mock the people who
+posted; describe the situation in your own words. No numbers about the world beyond what the sources say."""
+
+
 def topic_candidates(niche: str, subtopics: list[str], outliers: list[dict], profile_summary: list[str],
-                     n: int = 8) -> AgentTask:
+                     n: int = 8, news: list[dict] | None = None, brief: str = "") -> AgentTask:
+    news_block = ""
+    if news:
+        news_block = f"""
+LIVE NEWS AND REAL USER PROBLEMS (last weeks; public posts, bug reports, launches, outages; each has an id):
+{_j(news)}
+Base most candidates on these items: a real problem users hit, a real update or outage, turned into a relatable,
+funny situation. For each candidate list the item ids it grows from in `news_ids`, and say in `story` what really
+happened in one or two plain sentences, only from those items (never invent details). Prefer items many people
+reacted to and items about tools everyone uses."""
+    brief_block = f"""
+THE CREATOR'S TOPIC (they described what they want; every candidate must be about it): {brief}""" if brief.strip() else ""
     prompt = f"""Generate {n} candidate video topics for the niche "{niche}" (sub-topics: {', '.join(subtopics) or '-'}),
 using the `yt-viral` and `ig-viral` skills' idea of re-skinning what outliers prove, plus gaps: topics with
 demand where few good videos exist. For each, rate stick-figure fit 1-5 with this rubric: a concrete
@@ -94,17 +124,22 @@ a demand note may only reference the outliers below.
 
 OUTLIERS (multiple over own-channel median; synthetic rows are labelled):
 {_j(outliers[:40])}
-
+{brief_block}{news_block}
 NICHE PATTERN PROFILE:
 {_j(profile_summary)}"""
     cand = _obj({"id": STR, "title": STR, "angle": STR, "keywords": _arr(STR), "stickman_fit": NUM,
-                 "stickman_reason": STR, "niche_rating": NUM, "demand_note": STR})
+                 "stickman_reason": STR, "niche_rating": NUM, "demand_note": STR, "news_ids": _arr(STR), "story": STR},
+                ["id", "title", "angle", "keywords", "stickman_fit", "stickman_reason", "niche_rating", "demand_note"])
     return AgentTask("topic_candidates", prompt, _obj({"candidates": _arr(cand, 3)}), ["yt-viral", "ig-viral"],
                      "research", {"niche": niche, "subtopics": subtopics, "outliers": outliers,
-                                  "profile_summary": profile_summary, "n": n})
+                                  "profile_summary": profile_summary, "n": n, "news": news, "brief": brief})
 
 
 # ---- hooks and script -----------------------------------------------------------------------
+
+def _news_rule(topic: dict) -> str:
+    return "\n" + NEWS_RULE + "\n" if topic.get("sources") else ""
+
 
 def hooks(topic: dict, niche: str, platform: str, profile_summary: list[str], n: int = 5, dialogue: dict | None = None) -> AgentTask:
     skill, voice = ("ig-reel", VOICE_IG) if platform in ("reels", "shorts") else ("yt-script", VOICE_YT)
@@ -117,7 +152,7 @@ invented numbers ({{{{your number}}}} if needed). Do not score them; the app run
 
 TOPIC: {_j(topic)}
 NICHE: {niche}
-NICHE PATTERN PROFILE: {_j(profile_summary)}"""
+NICHE PATTERN PROFILE: {_j(profile_summary)}{_news_rule(topic)}"""
     if dialogue:
         prompt += f"""
 
@@ -163,7 +198,7 @@ TOPIC: {_j(topic)}
 APPROVED HOOK: {_j(hook)}
 NICHE: {niche}
 PLANNED BEATS: {_j(plan)}
-NICHE PROFILE: {_j(profile_summary)}{revision}"""
+NICHE PROFILE: {_j(profile_summary)}{_news_rule(topic)}{revision}"""
     clip = _obj({"index": INT, "stage": {"enum": ["golden-hook", "disrupting-assumptions", "insider-secrets",
                                                    "ultimate-truth", "elevation-discussion"]},
                  "vo": STR, "beats": _arr(STR)})
@@ -322,7 +357,7 @@ TOPIC: {_j(topic)}
 APPROVED HOOK (line 1, character a, word for word): {hook['say']}
 NICHE: {niche}
 NICHE PATTERN PROFILE: {_j(profile_summary)}
-{revision}
+{_news_rule(topic)}{revision}
 Return the lines in order as {{"speaker": {speaker_enum}, "text": "<delivery tags + words>", "timing": "quick"|"normal"|"beat",
 "pose": optional, "board": optional}}, plus `scene`, `turn` and `button` (1-based line numbers), the `title`, and
 `claims_to_source` (anything a viewer could read as a real-world fact; usually empty)."""

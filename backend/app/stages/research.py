@@ -11,6 +11,7 @@ from ..analysis.profile import build_profile
 from ..analysis.topics import score_candidates
 from ..analysis.transcript import cues_to_words, parse_cues, to_srt, words_json
 from ..jobs import StageError, stage
+from ..sources import news as news_src
 from ..sources import synthetic
 from ..sources.transcripts import fetch_auto_captions, ytdlp_available
 from ..tools import runner as tools
@@ -57,6 +58,48 @@ async def niche(ctx) -> dict:
             ctx.log(f"voice draft for {platform} written to {path}; apply it from the Niche screen")
     ctx.log(f"format: {fmt}, {p['ratio']}, {p['duration']}s, Style {p['style']} {p.get('theme', '')}")
     return {"outputs": outputs}
+
+
+NEWS_FOR_TOPICS = 30
+
+
+@stage("news", "Live AI news", description="Real problems, updates and outages about AI tools from public sources "
+       "(Hacker News, Reddit, GitHub issues, status pages and blogs), steered by your topic brief.")
+async def news(ctx) -> dict:
+    """What is actually happening with Claude, ChatGPT, Codex, Gemini, Cursor... this week: the problems users post,
+    launches, outages. Public sources only, no login. With a topic brief, the searches follow it."""
+    p = ctx.project_data()
+    cfg = ctx.settings.get("research") or {}
+    brief = str(ctx.params.get("brief", p.get("topic_brief")) or "").strip()
+    if not cfg.get("live", True):
+        ctx.write_json("research/news.json", {"items": [], "off": True, "brief": brief})
+        ctx.log("live research is off (Settings → Research); topics come from discovery" + (" and your brief" if brief else ""))
+        return {"outputs": ["research/news.json"]}
+    queries: list[str] = []
+    if ctx.dry_run:
+        data = {"items": synthetic.news_items(int(cfg.get("days", 14))), "sources": {"synthetic": {"ok": True, "count": 7}},
+                "days": int(cfg.get("days", 14)), "queries": [], "brief": brief, "synthetic": True}
+        ctx.log("DRY RUN: SYNTHETIC news items (not real posts)", "warn")
+    else:
+        if brief:
+            res = await ctx.agent.run(tasks.research_queries(brief, p["niche"]), ctx)
+            queries = [q.strip() for q in res.get("queries", []) if q.strip()][:5]
+            ctx.log(f"brief: \"{brief[:120]}\" → searching {', '.join(queries)}")
+        from ..settings import secret
+        data = await th(news_src.gather, cfg, queries, brief, ctx.log, None, secret("GITHUB_TOKEN"))
+    items = data["items"]
+    ok = [k for k, v in data["sources"].items() if v.get("ok")]
+    failed = [k for k, v in data["sources"].items() if not v.get("ok")]
+    ctx.write_json("research/news.json", data)
+    kinds = {k: sum(1 for i in items if i["kind"] == k) for k in ("problem", "update", "outage", "discussion")}
+    ctx.log(f"{len(items)} items from {len(ok)} source(s): " + ", ".join(f"{v} {k}s" for k, v in kinds.items() if v)
+            + (f"; skipped {len(failed)} that did not answer" if failed else ""))
+    for it in items[:5]:
+        ctx.log(f"  {it['kind']}: {it['title'][:90]} ({it['where']})")
+    if not items:
+        ctx.log("no live items" + (" matched your brief: try other words, or a longer look-back in Settings → Research" if brief
+                                   else ": check Settings → Research → Check sources"), "warn")
+    return {"outputs": ["research/news.json"]}
 
 
 @stage("discover", "Viral discovery", description="Rank by outlier multiple over each channel's own median.",
@@ -221,17 +264,26 @@ def _formula_counts(videos: list[dict]) -> dict:
        skills=["yt-viral", "ig-viral"])
 async def topics(ctx) -> dict:
     p = ctx.project_data()
-    profile = ctx.read_json("research/niche-profile.json")
+    # a brief can be researched before any discovery has run: no profile yet is fine
+    profile = ctx.read_json("research/niche-profile.json") if ctx.path("research/niche-profile.json").exists() else {"summary": []}
     swipe = db.swipe_items(ctx.project)
     outliers = [{"title": s["title"] or s["hook"], "multiple": s["multiple"], "views": s["views"], "platform": s["platform"],
                  "synthetic": s["synthetic"]} for s in swipe if (s["multiple"] or 0) >= 1.5][:40]
-    res = await ctx.agent.run(tasks.topic_candidates(p["niche"], p.get("subtopics", []), outliers, profile["summary"]), ctx)
+    news_data = ctx.read_json("research/news.json", default={}) if ctx.path("research/news.json").exists() else {}
+    items = news_data.get("items") or []
+    brief = str(ctx.params.get("brief", p.get("topic_brief")) or "").strip()
+    compact = [{"id": i["id"], "kind": i["kind"], "where": i["where"], "title": i["title"], "text": i["text"][:220],
+                "reactions": i["engagement"], "comments": i["comments"], "date": i["date"][:10], "tools": i["tools"]}
+               for i in items[:NEWS_FOR_TOPICS]]
+    res = await ctx.agent.run(tasks.topic_candidates(p["niche"], p.get("subtopics", []), outliers, profile["summary"],
+                                                     news=compact, brief=brief), ctx)
     rows = [{"title": s["title"] or s["hook"], "hook": s["hook"], "multiple": s["multiple"], "views": s["views"],
              "url": s["url"], "platform": s["platform"], "synthetic": s["synthetic"]} for s in swipe]
-    ranked = score_candidates(res["candidates"], rows, p["niche"] + " " + " ".join(p.get("subtopics", [])),
-                              ctx.settings.get("topic_weights"))
-    ctx.write_json("research/topics.json", {"weights": ctx.settings.get("topic_weights"), "topics": ranked,
+    ranked = score_candidates(res["candidates"], rows, " ".join([p["niche"], *p.get("subtopics", []), brief]),
+                              ctx.settings.get("topic_weights"), news=items)
+    ctx.write_json("research/topics.json", {"weights": ctx.settings.get("topic_weights"), "topics": ranked, "brief": brief,
+                                            "news_items": len(items), "news_synthetic": bool(news_data.get("synthetic")),
                                             "synthetic_evidence": any(r["synthetic"] for r in rows)})
     for r in ranked[:3]:
-        ctx.log(f"#{r['rank']} {r['score']:.2f} {r['title']}")
+        ctx.log(f"#{r['rank']} {r['score']:.2f} {r['title']}" + (f" (from {len(r['sources'])} real post(s))" if r.get("sources") else ""))
     return {"outputs": ["research/topics.json"]}

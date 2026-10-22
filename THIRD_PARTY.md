@@ -18,10 +18,12 @@ from `../ig-reel`.
 
 | Asset | Source | License |
 |---|---|---|
-| `renderer/public/models/stickman-rig.glb`: skeleton + 14 animation clips | "RobotExpressive" by Tomás Laulhé (Quaternius), with facial morphs by Don McCurdy, from the three.js repository `examples/models/gltf/RobotExpressive/` | CC0 1.0 (public domain). Its robot meshes are hidden; the stick figure and face drawn on it are this project's own |
+| `renderer/public/models/stickman-rig.glb`: skeleton + 14 animation clips | "RobotExpressive" by Tomás Laulhé (Quaternius), with facial morphs by Don McCurdy, from the three.js repository `examples/models/gltf/RobotExpressive/` | CC0 1.0 (public domain). Its robot meshes are hidden; the stick figure, face, hats, props and sets are this project's own, built in code |
 | three.js `0.180.0` (npm) | https://github.com/mrdoob/three.js | MIT |
 | Inter `@fontsource/inter 5.2.5` | https://rsms.me/inter/ | SIL Open Font License 1.1 |
 | JetBrains Mono `@fontsource/jetbrains-mono 5.2.5` | https://www.jetbrains.com/lp/mono/ | SIL Open Font License 1.1 |
+| Caveat `@fontsource/caveat 5.2.5` (cozy/prehistoric cards) | https://github.com/googlefonts/caveat | SIL Open Font License 1.1 |
+| EB Garamond `@fontsource/eb-garamond 5.2.5` (historical cards) | https://github.com/octaviopardo/EBGaramond12 | SIL Open Font License 1.1 |
 | playwright-core `1.56.1` (npm), drives the headless browser | https://github.com/microsoft/playwright | Apache-2.0 |
 
 ## Read-only references (not committed)

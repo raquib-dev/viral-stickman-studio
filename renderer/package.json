@@ -10,6 +10,8 @@
     "render": "node render.mjs"
   },
   "dependencies": {
+    "@fontsource/caveat": "5.2.5",
+    "@fontsource/eb-garamond": "5.2.5",
     "@fontsource/inter": "5.2.5",
     "@fontsource/jetbrains-mono": "5.2.5",
     "playwright-core": "1.56.1",

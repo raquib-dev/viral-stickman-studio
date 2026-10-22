@@ -1,61 +1,18 @@
-// Room, lights and the glowing UI elements (code panels, stat badges, signs). All text is drawn by
-// the engine on canvases, so it is crisp at any resolution (unlike text from a video model).
+// UI elements in the scene: code/note panels and stat badges. All text is drawn by the engine on
+// canvases (crisp at any resolution). The card skin follows the style pack: glow (modern), glass
+// (cinematic), flat (minimal), paper (cozy), parchment (historic), slate (prehistoric). Frames and glows
+// take the live palette, so they follow the mood.
 import * as THREE from "three";
 import { clamp, ease, lerp, noise1 } from "./util.js";
 
-export const THEMES = {
-  "warm-dark": { bg: "#120d0a", floor: "#2a1b13", wall: "#1a120d", glow: "#ff9a4d", key: "#ffc08a", rim: "#ff8a3d",
-    fill: "#4a5a7a", ink: "#f1ece4", accent: "#ffc76b", panel: "#14161b" },
-  "cool-dark": { bg: "#0b0e14", floor: "#151a24", wall: "#0f131b", glow: "#4d9aff", key: "#cfe0ff", rim: "#6aa8ff",
-    fill: "#3a2a4a", ink: "#eef2f7", accent: "#7cc4ff", panel: "#11151c" },
-  light: { bg: "#efe9df", floor: "#e3dbcf", wall: "#f3eee6", glow: "#ffd2a1", key: "#fff4e6", rim: "#ffb36b",
-    fill: "#b9c7dc", ink: "#2b2622", accent: "#e8602c", panel: "#ffffff" },
+/** Scene files from Phase 1 used "theme": these map onto style + theme + mood. */
+export const LEGACY_THEMES = {
+  "warm-dark": { style: "modern", theme: "dark", mood: "neutral" },
+  "cool-dark": { style: "modern", theme: "dark", mood: "tech" },
+  light: { style: "minimal", theme: "light", mood: "neutral" },
 };
 
-export function buildRoom(scene, theme) {
-  scene.background = new THREE.Color(theme.bg);
-  scene.fog = new THREE.Fog(theme.bg, 7, 18);
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(30, 48),
-    new THREE.MeshStandardMaterial({ color: theme.floor, roughness: 0.75, metalness: 0.05 }));
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  scene.add(floor);
-  // back wall with a soft warm glow behind the character
-  const c = document.createElement("canvas");
-  c.width = 512; c.height = 512;
-  const g = c.getContext("2d");
-  g.fillStyle = theme.wall; g.fillRect(0, 0, 512, 512);
-  const rg = g.createRadialGradient(256, 300, 10, 256, 300, 300);
-  rg.addColorStop(0, theme.glow + "55"); rg.addColorStop(1, theme.glow + "00");
-  g.fillStyle = rg; g.fillRect(0, 0, 512, 512);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const wall = new THREE.Mesh(new THREE.PlaneGeometry(26, 14), new THREE.MeshBasicMaterial({ map: tex, fog: true }));
-  wall.position.set(0, 6, -7);
-  scene.add(wall);
-
-  scene.add(new THREE.HemisphereLight(theme.key, theme.floor, 0.6));
-  const front = new THREE.DirectionalLight(theme.key, 0.55);   // soft camera-side fill so faces never go black
-  front.position.set(0.5, 1.6, 6);
-  scene.add(front);
-  const key = new THREE.DirectionalLight(theme.key, 2.2);
-  key.position.set(-1.6, 6.5, 3.2);
-  key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
-  key.shadow.camera.left = -4; key.shadow.camera.right = 4; key.shadow.camera.top = 4; key.shadow.camera.bottom = -2;
-  key.shadow.radius = 4;
-  key.shadow.bias = -0.0004;
-  scene.add(key);
-  const rim = new THREE.SpotLight(theme.rim, 28, 14, Math.PI / 6, 0.6, 1.4);
-  rim.position.set(2.2, 3.4, -3.2);
-  rim.target.position.set(0, 1.2, 0);
-  scene.add(rim, rim.target);
-  const fill = new THREE.DirectionalLight(theme.fill, 0.5);
-  fill.position.set(3, 2, 3);
-  scene.add(fill);
-}
-
-// ---- canvas helpers -------------------------------------------------------------------------
+const hex = (c) => `#${c.getHexString()}`;
 
 function roundRect(g, x, y, w, h, r) {
   g.beginPath();
@@ -63,21 +20,18 @@ function roundRect(g, x, y, w, h, r) {
   g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
 }
 
-const KW = /\b(import|export|from|const|let|var|function|return|if|else|for|while|class|new|async|await|def|self|None|True|False|type|interface)\b/g;
+const KW = /^(import|export|from|const|let|var|function|return|if|else|for|while|class|new|async|await|def|self|None|True|False|type|interface)$/;
 
-/** Tiny syntax colouring for code panels: strings, comments, keywords, numbers, punctuation. */
-function codeTokens(line) {
+/** Tiny syntax colouring: strings, comments, keywords, numbers, types, punctuation. */
+function codeTokens(line, light) {
+  const C = light ? { com: "#8a8f98", str: "#a3591b", num: "#b5482a", kw: "#7a3fd1", type: "#1f6fbf", id: "#1f2430", punct: "#5b6270" }
+    : { com: "#6b7280", str: "#e8c07d", num: "#f0a36b", kw: "#c9a7ff", type: "#8ed1ff", id: "#e6e1d6", punct: "#9aa3b2" };
   const out = [];
   const re = /(\/\/.*$|#.*$)|('[^']*'|"[^"]*"|`[^`]*`)|\b(\d+(?:\.\d+)?)\b|([A-Za-z_]\w*)|(\s+)|(.)/g;
   let m;
   while ((m = re.exec(line))) {
     const [s] = m;
-    if (m[1]) out.push([s, "#6b7280"]);
-    else if (m[2]) out.push([s, "#e8c07d"]);
-    else if (m[3]) out.push([s, "#f0a36b"]);
-    else if (m[4]) out.push([s, KW.test(s) ? "#c9a7ff" : /^[A-Z]/.test(s) ? "#8ed1ff" : "#e6e1d6"]);
-    else out.push([s, "#9aa3b2"]);
-    KW.lastIndex = 0;
+    out.push([s, m[1] ? C.com : m[2] ? C.str : m[3] ? C.num : m[4] ? (KW.test(s) ? C.kw : /^[A-Z]/.test(s) ? C.type : C.id) : C.punct]);
   }
   return out;
 }
@@ -85,8 +39,7 @@ function codeTokens(line) {
 function canvasTexture(w, h, draw) {
   const c = document.createElement("canvas");
   c.width = w; c.height = h;
-  const g = c.getContext("2d");
-  draw(g, w, h);
+  draw(c.getContext("2d"), w, h);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
@@ -103,70 +56,133 @@ function roundedShape(w, h, r) {
   return s;
 }
 
-/** A glowing outline (HDR colour, so bloom picks it up) around a rounded rectangle. */
-function glowFrame(w, h, r, color, width = 0.025, intensity = 2.2) {
+/** Outline around a rounded rectangle; HDR colour for the glowing skins so bloom picks it up. */
+function frameMesh(w, h, r, width) {
   const outer = roundedShape(w + width * 2, h + width * 2, r + width);
   outer.holes.push(roundedShape(w, h, r));
-  const col = new THREE.Color(color).multiplyScalar(intensity);
-  const m = new THREE.Mesh(new THREE.ShapeGeometry(outer, 12), new THREE.MeshBasicMaterial({ color: col, toneMapped: false, transparent: true }));
-  return m;
+  return new THREE.Mesh(new THREE.ShapeGeometry(outer, 12), new THREE.MeshBasicMaterial({ toneMapped: false, transparent: true }));
 }
 
-// ---- elements -------------------------------------------------------------------------------
+const SKIN = {
+  glow: { frame: 0.025, glow: 2.2, radius: 36, alpha: 0.94, shadow: false },
+  glass: { frame: 0.012, glow: 1.6, radius: 28, alpha: 0.72, shadow: false },
+  flat: { frame: 0, glow: 0, radius: 26, alpha: 1, shadow: true },
+  paper: { frame: 0, glow: 0, radius: 10, alpha: 1, shadow: true, tilt: 0.04 },
+  parchment: { frame: 0.012, glow: 0.9, radius: 6, alpha: 1, shadow: true },
+  slate: { frame: 0.02, glow: 0.7, radius: 18, alpha: 1, shadow: true },
+};
 
-export function codePanel(spec, theme) {
-  const w = spec.w ?? 2.2, lines = spec.lines ?? [];
-  const h = spec.h ?? Math.max(0.7, 0.32 + lines.length * 0.15);
-  const PX = 512;
-  const tex = canvasTexture(Math.round(w * PX), Math.round(h * PX), (g, cw, ch) => {
-    roundRect(g, 0, 0, cw, ch, 36);
-    g.fillStyle = theme.panel; g.globalAlpha = 0.94; g.fill(); g.globalAlpha = 1;
-    g.fillStyle = "#ffffff10"; g.fillRect(0, 0, cw, 96);
-    ["#ff5f57", "#febc2e", "#28c840"].forEach((c, i) => { g.fillStyle = c; g.beginPath(); g.arc(52 + i * 44, 48, 13, 0, 7); g.fill(); });
-    g.font = "500 40px 'JetBrains Mono'"; g.fillStyle = "#e6e1d6"; g.textBaseline = "middle";
-    g.fillText(spec.title ?? "", 200, 50);
-    g.font = "400 44px 'JetBrains Mono'";
-    lines.forEach((ln, i) => {
-      let x = 60;
-      for (const [s, col] of codeTokens(ln)) { g.fillStyle = col; g.fillText(s, x, 160 + i * 74); x += g.measureText(s).width; }
-    });
-  });
-  const group = new THREE.Group();
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: true }));
-  const frame = glowFrame(w, h, 0.07, spec.glow ?? theme.accent);
-  frame.position.z = -0.002;
-  group.add(frame, face);
-  return { group, mats: [face.material, frame.material], spec };
-}
-
-export function badge(spec, theme) {
-  const text = spec.text ?? "";
-  const size = spec.size ?? 1;
-  const hpx = 150;
-  const measure = document.createElement("canvas").getContext("2d");
-  measure.font = "800 96px Inter";
-  const wpx = Math.ceil(measure.measureText(text).width + 140);
-  // 0.16 m tall at size 1, width follows the text, so "19 files changed • +1,256" is ~1.5 m wide
-  const h = 0.16 * size, w = h * (wpx / hpx);
-  const tex = canvasTexture(wpx, hpx, (g, cw, ch) => {
-    roundRect(g, 0, 0, cw, ch, ch / 2);
-    const lg = g.createLinearGradient(0, 0, 0, ch);
-    lg.addColorStop(0, "#3a2a1c"); lg.addColorStop(1, "#1c140e");
+function paintCard(g, cw, ch, skin, pal, r) {
+  const card = hex(pal.card);
+  roundRect(g, 0, 0, cw, ch, r);
+  if (skin === "parchment") {
+    const lg = g.createRadialGradient(cw / 2, ch / 2, ch * 0.2, cw / 2, ch / 2, Math.max(cw, ch) * 0.75);
+    lg.addColorStop(0, card); lg.addColorStop(1, "#b89a62");
     g.fillStyle = lg; g.fill();
-    g.font = "800 96px Inter"; g.fillStyle = "#fff4e2"; g.textAlign = "center"; g.textBaseline = "middle";
-    g.shadowColor = theme.accent; g.shadowBlur = 18;
-    g.fillText(text, cw / 2, ch / 2 + 4);
-  });
+  } else if (skin === "slate") {
+    g.fillStyle = card; g.fill();
+    g.globalAlpha = 0.08; g.fillStyle = "#ffffff";
+    for (let i = 0; i < 40; i++) g.fillRect((i * 97) % cw, (i * 53) % ch, 40, 3);
+    g.globalAlpha = 1;
+  } else {
+    g.fillStyle = card; g.globalAlpha = SKIN[skin].alpha; g.fill(); g.globalAlpha = 1;
+  }
+}
+
+function elementGroup(w, h, tex, skinName, pal, radius) {
+  const skin = SKIN[skinName] ?? SKIN.glow;
   const group = new THREE.Group();
   const face = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-  const frame = glowFrame(w, h, h / 2, spec.glow ?? theme.accent, 0.018 * size, 2.6);
-  frame.position.z = -0.002;
-  group.add(frame, face);
-  return { group, mats: [face.material, frame.material], spec };
+  const mats = [face.material];
+  let frame = null;
+  if (skin.frame > 0) {
+    frame = frameMesh(w, h, radius, skin.frame);
+    frame.position.z = -0.002;
+    group.add(frame);
+    mats.push(frame.material);
+  }
+  if (skin.shadow) {
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(w * 1.04, h * 1.06), new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.25 }));
+    sh.position.set(0.03, -0.035, -0.01);
+    group.add(sh);
+    mats.push(sh.material);
+    sh.material.userData.maxOpacity = 0.25;
+  }
+  group.add(face);
+  if (skin.tilt) group.rotation.z = skin.tilt;
+  return { group, mats, frame, skin };
 }
 
-/** Enter/exit animation shared by panels, badges and signs. */
-export function animateElement(el, t, seed = 0) {
+export function panel(spec, ctx) {
+  const { pal, skin, font } = ctx;
+  const kind = spec.kind ?? (spec.title?.match(/\.\w+$/) ? "code" : "note");
+  const w = spec.w ?? 1.8, lines = spec.lines ?? [];
+  const lineH = kind === "code" ? 0.145 : 0.16;
+  const h = spec.h ?? Math.max(0.6, 0.34 + lines.length * lineH);
+  const PX = 512, r = SKIN[skin]?.radius ?? 30;
+  const light = pal.card.getHSL({}).l > 0.5;
+  const inkCol = hex(pal.cardInk);
+  const tex = canvasTexture(Math.round(w * PX), Math.round(h * PX), (g, cw, ch) => {
+    paintCard(g, cw, ch, skin, pal, r);
+    g.textBaseline = "middle";
+    if (kind === "code") {
+      g.fillStyle = light ? "#00000010" : "#ffffff10"; g.fillRect(0, 0, cw, 96);
+      ["#ff5f57", "#febc2e", "#28c840"].forEach((c, i) => { g.fillStyle = c; g.beginPath(); g.arc(52 + i * 44, 48, 13, 0, 7); g.fill(); });
+      g.font = "500 40px 'JetBrains Mono'"; g.fillStyle = inkCol;
+      g.fillText(spec.title ?? "", 200, 50);
+      g.font = "400 44px 'JetBrains Mono'";
+      lines.forEach((ln, i) => {
+        let x = 60;
+        for (const [s, col] of codeTokens(ln, light)) { g.fillStyle = col; g.fillText(s, x, 160 + i * 74); x += g.measureText(s).width; }
+      });
+    } else {
+      const big = font === "Caveat" ? 72 : 54, small = font === "Caveat" ? 58 : 44;
+      const family = font === "EB Garamond" ? "'EB Garamond'" : font;
+      g.fillStyle = hex(pal.accent);
+      g.font = `700 ${big}px ${family}`;
+      g.fillText(spec.title ?? "", 56, 70);
+      g.fillStyle = inkCol; g.font = `400 ${small}px ${family}`;
+      lines.forEach((ln, i) => {
+        g.fillStyle = hex(pal.accent); g.beginPath(); g.arc(70, 160 + i * 82, 9, 0, 7); g.fill();
+        g.fillStyle = inkCol; g.fillText(ln, 100, 160 + i * 82);
+      });
+    }
+  });
+  const el = elementGroup(w, h, tex, skin, pal, 0.07);
+  return { ...el, spec };
+}
+
+export function badge(spec, ctx) {
+  const { pal, skin, font } = ctx;
+  const text = spec.text ?? "";
+  const size = spec.size ?? 1;
+  const family = font === "EB Garamond" ? "'EB Garamond'" : font;
+  const weight = font === "Inter" ? 800 : 700;
+  const hpx = 150;
+  const measure = document.createElement("canvas").getContext("2d");
+  measure.font = `${weight} 96px ${family}`;
+  const wpx = Math.ceil(measure.measureText(text).width + 140);
+  // 0.16 m tall at size 1; the width follows the text
+  const h = 0.16 * size, w = h * (wpx / hpx);
+  const dark = pal.card.getHSL({}).l < 0.5;
+  const tex = canvasTexture(wpx, hpx, (g, cw, ch) => {
+    if (skin === "glow" || skin === "glass") {
+      roundRect(g, 0, 0, cw, ch, ch / 2);
+      const lg = g.createLinearGradient(0, 0, 0, ch);
+      lg.addColorStop(0, hex(pal.card.clone().lerp(pal.accent, 0.18))); lg.addColorStop(1, hex(pal.card));
+      g.fillStyle = lg; g.fill();
+      g.shadowColor = hex(pal.accent); g.shadowBlur = 18;
+    } else paintCard(g, cw, ch, skin, pal, ch / 2);
+    g.font = `${weight} 96px ${family}`; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillStyle = dark ? "#fff7ea" : hex(pal.cardInk);
+    g.fillText(text, cw / 2, ch / 2 + 4);
+  });
+  const el = elementGroup(w, h, tex, skin, pal, h / 2);
+  return { ...el, spec };
+}
+
+/** Enter/exit motion shared by panels and badges, plus live frame colour from the palette. */
+export function animateElement(el, t, seed, pal) {
   const s = el.spec;
   const tin = s.t_in ?? 0, tout = s.t_out ?? Infinity, dur = s.enter ?? 0.7;
   const kin = clamp((t - tin) / dur), kout = clamp((t - tout) / 0.4);
@@ -178,9 +194,9 @@ export function animateElement(el, t, seed = 0) {
   const bob = (s.float ?? 0.02) * noise1(t * 0.6 + seed * 7, seed);
   el.group.position.set(lerp(from[0], to[0], k), lerp(from[1], to[1], k) + bob, lerp(from[2], to[2], k));
   const rot = s.rot ?? [0, 0, 0];
-  el.group.rotation.set(rot[0] + (1 - k) * 0.4, rot[1] + (1 - k) * -0.3, rot[2]);
-  const sc = (s.scale ?? 1) * lerp(0.85, 1, ease("outCubic", kin));
-  el.group.scale.setScalar(sc);
+  el.group.rotation.set(rot[0] + (1 - k) * 0.4, rot[1] + (1 - k) * -0.3, rot[2] + (el.skin.tilt ?? 0) * (seed % 2 ? 1 : -1));
+  el.group.scale.setScalar((s.scale ?? 1) * lerp(0.85, 1, ease("outCubic", kin)));
   const op = ease("outCubic", kin) * (1 - kout);
-  for (const m of el.mats) m.opacity = op;
+  for (const m of el.mats) m.opacity = op * (m.userData.maxOpacity ?? 1);
+  if (el.frame) el.frame.material.color.copy(s.glow ? new THREE.Color(s.glow) : pal.accent).multiplyScalar(Math.max(1, el.skin.glow));
 }

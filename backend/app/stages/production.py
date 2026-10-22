@@ -43,7 +43,8 @@ def _clip_specs(ctx, p: dict) -> list[ClipSpec]:
                               out_path=ctx.path(f"clips/clip-{k + 1:02d}.mp4"),
                               label=a["rows"][k]["purpose"] if k < len(a["rows"]) else "",
                               vo=s["clips"][k]["vo"] if k < len(s["clips"]) else "",
-                              theme=p.get("theme", "dark"), voice_pref=p.get("voice_pref", "male")))
+                              theme=p.get("theme", "dark"), voice_pref=p.get("voice_pref", "male"),
+                              style=str(p.get("style", "1")), count=len(b["prompts"])))
     return specs
 
 

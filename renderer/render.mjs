@@ -2,9 +2,11 @@
 // Render a scene plan to mp4: serve dist/, open it in a headless browser (Edge/Chrome/Chromium),
 // render frame by frame on the scene's own clock, pipe PNG frames into ffmpeg.
 // Usage: node render.mjs --scene scene.json --out clip.mp4
+//        node render.mjs --scene scene.json --stills 0.5,4,8 --out-dir previews/   (PNG frames at those seconds)
+//        node render.mjs --catalog                                                (what this build supports)
 // Progress goes to stdout as JSON lines: {"event":"info"|"progress"|"done", ...}
 import { spawn } from "node:child_process";
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,11 +15,14 @@ import { chromium } from "playwright-core";
 const here = dirname(fileURLToPath(import.meta.url));
 const arg = (k, d) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d; };
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
-const scenePath = arg("scene"), out = arg("out");
+const scenePath = arg("scene"), out = arg("out"), stills = arg("stills"), outDir = arg("out-dir");
+const catalogOnly = process.argv.includes("--catalog");
 const dist = arg("dist", join(here, "dist"));
-if (!scenePath || !out) { console.error("usage: node render.mjs --scene scene.json --out clip.mp4"); process.exit(2); }
+if (!catalogOnly && (!scenePath || !(out || (stills && outDir)))) {
+  console.error("usage: node render.mjs --scene scene.json --out clip.mp4 | --stills 1,4 --out-dir dir | --catalog"); process.exit(2);
+}
 if (!existsSync(join(dist, "index.html"))) { console.error(`renderer not built: run "npm run build" in ${here}`); process.exit(3); }
-const scene = JSON.parse(readFileSync(scenePath, "utf8"));
+const scene = catalogOnly ? {} : JSON.parse(readFileSync(scenePath, "utf8"));
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".glb": "model/gltf-binary",
   ".woff2": "font/woff2", ".woff": "font/woff", ".json": "application/json", ".png": "image/png" };
@@ -43,8 +48,24 @@ try {
   page.on("pageerror", (e) => emit({ event: "page-error", message: String(e) }));
   await page.goto(url);
   await page.waitForFunction(() => window.vss?.ready, null, { timeout: 60000 });
+  if (catalogOnly) {
+    emit({ event: "catalog", live: await page.evaluate(() => window.vss.catalog()), file: await page.evaluate(() => window.vss.fileCatalog) });
+    process.exitCode = 0;
+    throw null;
+  }
   const info = await page.evaluate((s) => window.vss.load(s), scene);
   emit({ event: "info", ...info });
+  if (stills) {
+    mkdirSync(outDir, { recursive: true });
+    for (const sec of stills.split(",").map(Number)) {
+      const data = await page.evaluate((k) => window.vss.frame(k), Math.min(info.frames - 1, Math.round(sec * info.fps)));
+      const f = join(outDir, `still-${sec.toFixed(2)}.png`);
+      writeFileSync(f, Buffer.from(data.slice(data.indexOf(",") + 1), "base64"));
+      emit({ event: "still", t: sec, file: f });
+    }
+    emit({ event: "done", seconds: (Date.now() - t0) / 1000 });
+    throw null;
+  }
   ff = spawn(process.env.FFMPEG_PATH || "ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "image2pipe",
     "-framerate", String(info.fps), "-c:v", "png", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p",
     "-preset", "medium", "-crf", String(scene.crf ?? 16), "-movflags", "+faststart", out], { stdio: ["pipe", "inherit", "inherit"] });
@@ -59,9 +80,11 @@ try {
   await done;
   emit({ event: "done", out, seconds: (Date.now() - t0) / 1000 });
 } catch (e) {
+  if (e === null) { /* --catalog / --stills finished early */ } else {
   emit({ event: "error", message: String(e?.message ?? e) });
   process.exitCode = 1;
   ff?.kill();
+  }
 } finally {
   await browser.close();
   server.close();

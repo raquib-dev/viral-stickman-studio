@@ -59,9 +59,15 @@ export default function Settings() {
               <option value="high">high (glow + depth of field)</option><option value="medium">medium (glow only)</option><option value="draft">draft (fastest)</option></select></label>
             <label className="text-sm">Frame rate<select className="input" value={s.render.threejs.fps} onChange={(e) => set(["render", "threejs", "fps"], Number(e.target.value))}>
               {[24, 30, 60].map((f) => <option key={f} value={f}>{f} fps</option>)}</select></label>
+            <label className="text-sm">Look (style pack)<select className="input" value={s.render.threejs.style} onChange={(e) => set(["render", "threejs", "style"], e.target.value)} data-testid="threejs-style">
+              <option value="auto">auto: the project's style</option><option value="minimal">Minimalist</option><option value="modern">Modern studio tech</option>
+              <option value="cinematic">Cinematic story</option><option value="cozy">Cozy storytelling</option><option value="historic">Historical</option><option value="prehistoric">Prehistoric</option></select></label>
+            <label className="text-sm">Colours<select className="input" value={s.render.threejs.mood} onChange={(e) => set(["render", "threejs", "mood"], e.target.value)} data-testid="threejs-mood">
+              <option value="auto">follow each beat's content</option><option value="off">the style's own colours</option>
+              {["money", "success", "danger", "calm", "tech", "mystery", "nostalgia", "sad", "love", "nature"].map((m) => <option key={m} value={m}>always {m}</option>)}</select></label>
             <label className="text-sm">Browser<select className="input" value={s.render.threejs.browser_channel} onChange={(e) => set(["render", "threejs", "browser_channel"], e.target.value)}>
               <option value="">auto (Edge on Windows)</option><option value="msedge">Microsoft Edge</option><option value="chrome">Google Chrome</option></select></label>
-            <p className="text-xs text-ink-3 md:col-span-3">Each clip's scene comes from <code>projects/&lt;slug&gt;/scenes/clip-NN.json</code> if you put one there (see <code>renderer/scenes/demo.json</code>), otherwise from the beat and voiceover by keyword. The voice is made first so the mouth follows it. Renders on your GPU through the browser: seconds per clip.</p>
+            <p className="text-xs text-ink-3 md:col-span-3">Each clip's scene comes from <code>projects/&lt;slug&gt;/scenes/clip-NN.json</code> if you put one there (see <code>renderer/scenes/demo.json</code>), otherwise planned from the beat and voiceover: style from the project, colours from the words (money lines go green-gold, warnings red, calm blue; a "but…" turn changes colour mid-line), props, gestures, a second character for "they / vs" lines, and two camera shots. The voice is made first so the mouth follows it.</p>
           </div>
         )}
         {s.render.backend === "local-comfyui" && (

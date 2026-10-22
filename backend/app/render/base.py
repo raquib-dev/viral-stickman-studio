@@ -19,6 +19,8 @@ class ClipSpec:
     vo: str = ""
     theme: str = "dark"           # local backends draw/voice from these; API backends read the prompt
     voice_pref: str = "male"
+    style: str = "1"              # the directing skill's style id (1, 2A, 2B, 3, 4, 5)
+    count: int = 1                # clips in the video (first/last clip get transitions)
 
 
 @dataclass

@@ -211,10 +211,26 @@ Then Settings → Render → Backend **local-threejs** → Save, and Local servi
 renderer" row turns green). On Windows it renders with Microsoft Edge, which is already installed. Try the
 demo directly: `node renderer/render.mjs --scene renderer/scenes/demo.json --out demo.mp4`.
 
-Each clip's scene comes from `projects/<slug>/scenes/clip-NN.json` if that file exists (copy
-`renderer/scenes/demo.json` as a starting point), otherwise from the beat and the voiceover by keyword.
-Edit the file, then **Regenerate this clip only**. The AI scene planner, a bigger motion library and
-AI-drawn props are the next phases.
+**Six looks**, matching the directing skill's styles (the project's Style picks one; Settings → Render →
+Look can force another): Minimalist (1), Modern studio tech (2A), Cinematic story (2B), Prehistoric (3),
+Cozy storytelling (4), Historical (5). Each has its own set, lighting, character material, card style,
+fonts and colour grade, in dark and light.
+
+**Colours follow the content.** Each beat gets a mood from its words: money lines go green-gold, warnings
+red, wins gold, calm lines blue, tech cyan, secrets purple, memories sepia. When a line turns ("...but...")
+the colour shifts at that moment. Settings → Render → Colours can turn this off or fix one mood.
+
+**What the planner does per clip:** a prop from the topic (about 40, e.g. coins, clock, laptop, phone,
+heart, warning, scroll, crown, spear) placed beside the character or held in their hand; a gesture
+(point, present, think, facepalm, shrug, cheer, arms crossed, hands on hips, hold, explain); a hat from
+roles (king → crown, soldier → helmet); a walk-in on the first clip; a second character for "they / vs /
+boss" lines; two camera shots; fades on the first and last clip; and a stat badge only for numbers the
+voiceover says.
+
+Each clip's scene comes from `projects/<slug>/scenes/clip-NN.json` if that file exists (the plan the app
+made is saved next to the clip as `clips/clip-NN.scene.json`: copy it there and edit), otherwise from the
+planner above. Edit, then **Regenerate this clip only**. The format and the rules are in
+`renderer/RULES.md`. The AI scene planner and AI-drawn props are the next phases.
 
 ### ComfyUI on Windows (optional: AI-generated video on your GPU)
 

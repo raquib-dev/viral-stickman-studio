@@ -20,8 +20,16 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
 6. **Respect the safe zones.** Keep the character and elements inside the band left free by the hook
    card (top), word captions (lower middle) and platform buttons (bottom and right), using the same
    margins as `backend/app/render/overlays.py`.
-7. **One character, one look.** Every clip uses the same rig and stick-figure proportions (`LEN` in
-   `src/rig.js`), and the same theme for the whole video.
+7. **One character, one look; colours follow the content.** Every clip uses the same rig, stick-figure
+   proportions (`LEN` in `src/rig.js`) and style pack for the whole video. Within that style, the *mood*
+   (palette) follows what each beat says and may change mid-clip, always by a smooth blend (0.8 s).
+   A mood never changes the style, the character or the set.
+11. **Everything has a name in `catalog.json`.** Styles, moods, props, gestures, hats, clips, expressions,
+    shots and transitions are listed there. The Python planner and validator read it, and a test fails if
+    it differs from what the built renderer supports.
+12. **Keep things in the frame.** Planned props and badges are placed for a 9:16 frame (beside the
+    character at chest height, or on the floor next to them). Two-character shots back off until both
+    figures are fully visible.
 8. **Offline and licensed.** Every model, font and library is in the repo or in `package.json` with an
    exact version, under a licence listed in `THIRD_PARTY.md` (CC0, MIT, OFL, Apache-2.0). No CDN, no
    network access at render time.
@@ -31,28 +39,37 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
 10. **Reviewed in phases.** The look (Phase 1) is approved before the motion library, the AI scene
     planner and the asset generator are built on top of it.
 
-## Scene plan (version 1)
+## Scene plan (version 2)
 
 ```jsonc
 {
-  "version": 1, "width": 720, "height": 1280, "fps": 24, "duration": 10,
-  "theme": "warm-dark",            // warm-dark | cool-dark | light
-  "seed": 7, "quality": "high",    // high = bloom + depth of field, medium = bloom, draft = neither
+  "version": 2, "width": 720, "height": 1280, "fps": 24, "duration": 10, "seed": 7, "quality": "high",
+  "style": "cozy",                 // minimal | modern | cinematic | prehistoric | cozy | historic, or a skill id 1/2A/2B/3/4/5
+  "theme": "dark",                 // dark | light (each style has both)
+  "mood": [{ "t": 0, "mood": "money" }, { "t": 3.8, "mood": "success" }],   // or one name; blends over 0.8 s
   "actors": [{
-    "id": "hero", "position": [0, 0, 0], "facing": 0,              // metres, radians
-    "anim": [{ "t": 0, "clip": "Idle" }, { "t": 1.1, "clip": "No" }], // 0.35 s cross-fades; one-shots return to Idle
-    "face": [{ "t": 0, "expr": "surprised" }, { "t": 3.6, "expr": "confused" }],
-    "talk": [[0.35, 3.2]],                                         // or "mouth": {fps, values[]} from the voice
-    "color": "#f1ece4"
+    "id": "hero", "position": [0, 0, 0], "facing": "camera",            // or radians
+    "path": [{ "t": 0, "pos": [-1.6, 0, 0.3] }, { "t": 1.7, "pos": [0, 0, 0] }],  // walks/runs automatically
+    "anim": [{ "t": 0, "clip": "Idle" }, { "t": 2.0, "clip": "ThumbsUp" }],
+    "gestures": [{ "t": 2.4, "gesture": "point", "target": "p1", "dur": 2.2 }, { "t": 5, "gesture": "think" }],
+    "look": [{ "t": 0, "at": "camera" }, { "t": 3, "at": "other" }],      // camera | actor id | prop id | left/right/up/down | [x,y,z]
+    "face": [{ "t": 0, "expr": "surprised" }],
+    "talk": [[0.4, 6.0]],                                              // or "mouth": {fps, values[]} from the voice
+    "hat": "crown", "color": "#f1ece4"
   }],
-  "panels": [{ "title": "theme/dark.ts", "lines": ["export const dark = {"], "t_in": 4.6,
-               "pos": [0.6, 1.08, -0.3], "rot": [0, -0.3, 0], "w": 1.5 }],
-  "badges": [{ "text": "19 files changed • +1,256", "t_in": 5.4, "pos": [0, 2.75, -0.7], "size": 0.95 }],
-  "camera": [{ "t": 0, "pos": [0, 1.6, 1.3], "look": [0, 1.58, 0], "fov": 32 },
-             { "t": 4.6, "pos": [0.35, 1.85, 4.4], "look": [0.1, 1.65, -0.5], "fov": 40, "ease": "inOutCubic" }]
+  "props": [{ "id": "p1", "type": "coins", "pos": [0.55, 0, 0.15], "t_in": 1.0, "enter": "drop", "idle": "bob" },
+            { "type": "mug", "hold": { "actor": "hero", "hand": "R", "t": 0.6 } }],
+  "panels": [{ "title": "theme/dark.ts", "lines": ["export const dark = {"], "t_in": 4.6, "pos": [0.6, 1.08, -0.3] },
+             { "kind": "note", "title": "Three rules", "lines": ["Pay yourself first"], "pos": [0, 2.2, -1] }],
+  "badges": [{ "text": "19 files changed", "t_in": 5.4, "pos": [0, 2.15, -0.4] }],
+  "camera": [{ "t": 0, "shot": { "type": "medium", "target": "hero", "side": -0.18 } },
+             { "t": 5, "shot": "closeup", "ease": "inOutCubic" },
+             { "t": 10, "pos": [0, 1.6, 3], "look": [0, 1.2, 0], "orbit": 0.3 }],
+  "transition": { "in": "fade", "out": "none" }                        // none | fade | iris | wipe
 }
 ```
 
-Clips (from the CC0 rig): Idle, Walking, Running, Dance, Death, Sitting, Standing, Jump, Yes, No, Wave,
-Punch, ThumbsUp, WalkJump. Expressions: neutral, happy, surprised, sad, angry, confused, thinking,
-skeptical. Elements also take `from`, `t_out`, `ease`, `scale`, `float`, `glow`.
+Style packs: the set, the character material, the card skin (glow, glass, flat, paper, parchment, slate), the
+fonts and the grade. Moods: neutral, money, success, danger, calm, tech, mystery, nostalgia, sad, love, nature.
+The full lists of props, gestures, hats, clips, expressions, shots and transitions are in `catalog.json`.
+Version 1 scenes (`"theme": "warm-dark"` and no style) still render.

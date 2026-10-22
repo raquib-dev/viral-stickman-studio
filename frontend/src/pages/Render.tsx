@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { GatePanel } from "../components/GatePanel";
 import { RunStageButton } from "../components/Pipeline";
 import { Empty, ErrorBox, Note, Section, StatusChip, fmtDur, fmtUsd } from "../components/ui";
@@ -46,6 +47,7 @@ export default function Render() {
         {settings?.dry_run && <div className="mt-2"><Note>Dry run is on: the mock backend writes free placeholder clips. Turn it off in Settings for a real render.</Note></div>}
       </Section>
       {r?.backend === "local-threejs" && <ScenePlans n={n} />}
+      {r?.backend === "local-threejs" && <PropsGallery />}
       <Section title="Clips" right={<span className="text-xs text-ink-3" data-testid="clip-summary">{doneCount}/{n} done · {attemptsUsed} attempt(s), {failedAttempts} failed{row?.status === "running" && row.message ? ` · ${row.message}` : ""}</span>}>
         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-3" data-testid="clip-grid">
           {Array.from({ length: n }, (_, k) => (
@@ -150,9 +152,10 @@ function ScenePlans({ n }: { n: number }) {
   const [err, setErr] = useState<string | null>(null);
   const row = snap?.stages.find((s) => s.stage === "scene_plan");
   const busy = row?.status === "running" || row?.status === "queued" || snap?.pipeline?.status === "running";
-  const replan = async (k: number) => {
+  const replan = async (k: number, edited = false) => {
     setErr(null);
-    try { await api.post(`/projects/${slug}/stages/scene_plan/run`, { params: { only: [k], force: true } }); } catch (e: any) { setErr(e.message); }
+    if (edited && !window.confirm(`Clip ${k} was edited by you. Replace your edits with a new AI plan?`)) return;
+    try { await api.post(`/projects/${slug}/stages/scene_plan/run`, { params: { only: [k], force: true, overwrite_edits: edited } }); } catch (e: any) { setErr(e.message); }
   };
   return (
     <Section title="3D scene plans" right={<RunStageButton stage="scene_plan" label="Plan all scenes" />}>
@@ -182,13 +185,54 @@ function ScenePlans({ n }: { n: number }) {
                   <ul className="mt-1 list-disc pl-4 text-ink-2">{p.fixes.map((f: string, i: number) => <li key={i}>{f}</li>)}</ul></details>
               )}
               <div className="mt-2 flex gap-2">
-                <button className="btn !py-0.5 text-xs" disabled={busy} onClick={() => replan(k + 1)} data-testid={`replan-${k + 1}`}>↻ Re-plan</button>
+                <Link className="btn !py-0.5 text-xs" to={`/p/${slug}/scene?clip=${k + 1}`} data-testid={`edit-scene-${k + 1}`}>✎ Edit</Link>
+                <button className="btn !py-0.5 text-xs" disabled={busy} onClick={() => replan(k + 1, p?.planned_by === "editor")} data-testid={`replan-${k + 1}`}>↻ Re-plan</button>
                 {p && <a className="btn !py-0.5 text-xs" href={fileUrl(slug!, p.file)} target="_blank" rel="noreferrer">View plan</a>}
               </div>
             </div>
           );
         })}
       </div>
+      {err && <ErrorBox>{err}</ErrorBox>}
+    </Section>
+  );
+}
+
+/** Phase 4: props the AI drew for this project (and your shared library). */
+function PropsGallery() {
+  const { slug, version, snap } = useProject();
+  const [items, setItems] = useState<any[]>([]);
+  const [name, setName] = useState("");
+  const [describe, setDescribe] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { if (slug) api.get<any[]>(`/projects/${slug}/assets`).then(setItems).catch(() => {}); }, [slug, version, snap]);
+  const act = async (fn: () => Promise<any>, ok: string) => { setErr(null); setMsg(null); try { await fn(); setMsg(ok); } catch (e: any) { setErr(e.message); } };
+  return (
+    <Section title="Props drawn by AI">
+      <p className="mb-3 text-xs text-ink-3">When no built-in prop fits a line, the scene planner asks your writing model to draw one as low-poly shapes. Every drawing is checked, takes the video's colours, and is reused across clips. ✦ marks them in the plans above. Save good ones to your library to use them in every project.</p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="props-gallery">
+        {items.map((a) => (
+          <div key={a.key} className="card-2 text-xs" data-testid={`prop-${a.key}`}>
+            {a.preview ? <img className="mb-2 aspect-square w-full rounded-lg bg-black object-cover" src={`${fileUrl(slug!, a.preview)}?v=${version}`} alt={a.name} />
+              : <div className="mb-2 grid aspect-square w-full place-items-center rounded-lg bg-surface-3 text-ink-3">no preview</div>}
+            <div className="flex items-center justify-between gap-1"><b className="text-sm">{a.name}</b><span className="chip !py-0">{a.where === "library" ? "library" : a.source}</span></div>
+            <div className="text-ink-3">{a.parts} parts · {a.height?.toFixed?.(2)} m</div>
+            {a.describe && <div className="mt-1 italic text-ink-2">“{a.describe}”</div>}
+            <div className="mt-2 flex flex-wrap gap-1">
+              <button className="btn !py-0.5 text-xs" onClick={() => act(() => api.post(`/projects/${slug}/assets/${a.key}/redraw`, {}), `redrawing ${a.name}…`)}>↻ Redraw</button>
+              {a.where === "project" && <button className="btn !py-0.5 text-xs" onClick={() => act(() => api.post(`/projects/${slug}/assets/${a.key}/library`), `${a.name} saved to your library`)}>★ To library</button>}
+            </div>
+          </div>
+        ))}
+        {!items.length && <Empty>No drawn props yet. They appear when a plan needs one, or draw one below.</Empty>}
+      </div>
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="text-xs">Name<input className="input !w-44" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. treasure chest" data-testid="new-prop-name" /></label>
+        <label className="grow text-xs">What it looks like<input className="input" value={describe} onChange={(e) => setDescribe(e.target.value)} placeholder="a wooden chest with a gold lock, lid slightly open" /></label>
+        <button className="btn" disabled={!name.trim()} onClick={() => act(() => api.post(`/projects/${slug}/assets`, { name, describe }), `drawing ${name}…`)} data-testid="draw-prop">✎ Draw prop</button>
+      </div>
+      {msg && <p className="mt-2 text-xs">✓ {msg}</p>}
       {err && <ErrorBox>{err}</ErrorBox>}
     </Section>
   );

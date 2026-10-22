@@ -349,7 +349,24 @@ def learn_read(retention: Any, ig_insights: str, plan: list, duration: float) ->
 
 
 def scene_plan(clip: int, count: int, row: dict, vo: str, style: str, theme: str, ratio: str, duration: float,
-               talk: list, catalog: dict, draft: dict, feedback: str = "") -> dict:
+               talk: list, catalog: dict, draft: dict, feedback: str = "", assets: list | None = None) -> dict:
     """Dry run: the keyword planner's draft, unchanged, with a note saying so."""
     keep = {k: draft[k] for k in ("mood", "actors", "props", "panels", "badges", "camera", "transition") if k in draft}
     return {**FIX, **keep, "props": keep.get("props", []), "notes": "dry-run fixture: the keyword plan as drafted"}
+
+
+def draw_prop(name: str, describe: str, style: str, catalog: dict, feedback: str = "") -> dict:
+    """Dry run: a simple, deterministic stand-in (a stacked totem whose shape comes from the name)."""
+    h = sum(ord(c) for c in name)
+    shapes = ["box", "ico", "cylinder", "cone", "sphere", "pyramid"]
+    parts = [{"shape": "cylinder", "size": [0.18, 0.2, 0.08], "pos": [0, 0.04, 0], "color": "dark"}]
+    y = 0.08
+    for k in range(3):
+        sh = shapes[(h + k) % len(shapes)]
+        size = {"box": [0.26, 0.18, 0.2], "ico": [0.12], "cylinder": [0.1, 0.12, 0.18], "cone": [0.13, 0.22],
+                "sphere": [0.11], "pyramid": [0.13, 0.2]}[sh]
+        y += 0.11
+        parts.append({"shape": sh, "size": size, "pos": [0, y, 0], "color": ["accent", "card", "gold"][k],
+                      **({"motion": {"type": "bob", "amount": 0.02, "speed": 0.7}, "name": "top"} if k == 2 else {})})
+        y += 0.09
+    return {**FIX, "name": name, "height": 0.6, "parts": parts, "notes": "dry-run fixture: a placeholder totem"}

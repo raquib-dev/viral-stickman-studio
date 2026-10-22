@@ -4,6 +4,7 @@
 // Usage: node render.mjs --scene scene.json --out clip.mp4
 //        node render.mjs --scene scene.json --stills 0.5,4,8 --out-dir previews/   (PNG frames at those seconds)
 //        node render.mjs --catalog                                                (what this build supports)
+//        add --pack anim-pack.glb to use a humanoid animation pack from any path
 // Progress goes to stdout as JSON lines: {"event":"info"|"progress"|"done", ...}
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -15,7 +16,7 @@ import { chromium } from "playwright-core";
 const here = dirname(fileURLToPath(import.meta.url));
 const arg = (k, d) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d; };
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
-const scenePath = arg("scene"), out = arg("out"), stills = arg("stills"), outDir = arg("out-dir");
+const scenePath = arg("scene"), out = arg("out"), stills = arg("stills"), outDir = arg("out-dir"), packFile = arg("pack");
 const catalogOnly = process.argv.includes("--catalog");
 const dist = arg("dist", join(here, "dist"));
 if (!catalogOnly && (!scenePath || !(out || (stills && outDir)))) {
@@ -28,8 +29,9 @@ const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css
   ".woff2": "font/woff2", ".woff": "font/woff", ".json": "application/json", ".png": "image/png" };
 const server = createServer((req, res) => {
   const rel = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname)).replace(/^([/\\])+/, "");
-  const f = join(dist, rel || "index.html");
-  if (!f.startsWith(dist) || !existsSync(f) || statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
+  // --pack serves an animation pack from anywhere as models/anim-pack.glb
+  const f = packFile && rel.replace(/\\/g, "/") === "models/anim-pack.glb" ? packFile : join(dist, rel || "index.html");
+  if ((f !== packFile && !f.startsWith(dist)) || !existsSync(f) || statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { "content-type": MIME[extname(f)] ?? "application/octet-stream" });
   createReadStream(f).pipe(res);
 });

@@ -136,5 +136,36 @@
     "fade",
     "iris",
     "wipe"
+  ],
+  "asset_shapes": [
+    "box",
+    "sphere",
+    "ico",
+    "cylinder",
+    "cone",
+    "torus",
+    "capsule",
+    "pyramid",
+    "wedge"
+  ],
+  "asset_colors": [
+    "accent",
+    "ink",
+    "card",
+    "dark",
+    "metal",
+    "gold",
+    "wood",
+    "green",
+    "red",
+    "glow",
+    "glass"
+  ],
+  "asset_motions": [
+    "swing",
+    "spin",
+    "bob",
+    "pulse",
+    "flap"
   ]
 }

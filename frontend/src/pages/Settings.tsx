@@ -65,6 +65,8 @@ export default function Settings() {
             <label className="text-sm">Colours<select className="input" value={s.render.threejs.mood} onChange={(e) => set(["render", "threejs", "mood"], e.target.value)} data-testid="threejs-mood">
               <option value="auto">follow each beat's content</option><option value="off">the style's own colours</option>
               {["money", "success", "danger", "calm", "tech", "mystery", "nostalgia", "sad", "love", "nature"].map((m) => <option key={m} value={m}>always {m}</option>)}</select></label>
+            <label className="text-sm">Animation pack<select className="input" value={s.render.threejs.animation_pack} onChange={(e) => set(["render", "threejs", "animation_pack"], e.target.value)} data-testid="threejs-pack">
+              <option value="auto">use it when installed</option><option value="off">off (base rig only)</option></select></label>
             <label className="text-sm">Browser<select className="input" value={s.render.threejs.browser_channel} onChange={(e) => set(["render", "threejs", "browser_channel"], e.target.value)}>
               <option value="">auto (Edge on Windows)</option><option value="msedge">Microsoft Edge</option><option value="chrome">Google Chrome</option></select></label>
             <p className="text-xs text-ink-3 md:col-span-3">Each clip's scene comes from <code>projects/&lt;slug&gt;/scenes/clip-NN.json</code> if you put one there (see <code>renderer/scenes/demo.json</code>), otherwise planned from the beat and voiceover: style from the project, colours from the words (money lines go green-gold, warnings red, calm blue; a "but…" turn changes colour mid-line), props, gestures, a second character for "they / vs" lines, and two camera shots. The voice is made first so the mouth follows it.</p>
@@ -169,6 +171,8 @@ function LocalServices() {
             )}</Row>
           <Row ok={st.threejs?.ok} name="three.js renderer" fix={<>{st.threejs?.fix} (README → three.js renderer)</>}>
             {st.threejs?.ok ? "ready (Node + renderer build + browser driver)" : `missing: ${[!st.threejs?.node && "Node.js", !st.threejs?.deps && "renderer packages", !st.threejs?.built && "renderer build"].filter(Boolean).join(", ")}`}</Row>
+          <Row ok={st.threejs?.pack} name="Animation pack" fix={<>Optional: download the free CC0 <a className="underline" href="https://quaternius.itch.io/universal-animation-library" target="_blank" rel="noreferrer">Universal Animation Library</a> (Quaternius), save its glTF/GLB as <code>renderer/public/models/anim-pack.glb</code>, then <code>npm run build</code> in renderer/. README → Animation pack.</>}>
+            {st.threejs?.pack ? "installed: walking, running, idle and more come from the pack" : "not installed: the base CC0 rig's moves are used"}</Row>
           <Row ok={st.stickman?.ok} name="Stickman animator" fix={st.stickman?.error}>{st.stickman?.ok ? "ready (Pillow + ffmpeg)" : ""}</Row>
           <Row ok={st.tts?.kokoro || st.tts?.piper} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx</>}>
             {[st.tts?.kokoro && "Kokoro", st.tts?.piper && "Piper"].filter(Boolean).join(", ") || "no engine installed: local clips will be silent"}</Row>

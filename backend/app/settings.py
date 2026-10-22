@@ -110,7 +110,7 @@ DEFAULTS: dict[str, Any] = {
         "threejs": {"fps": 24, "quality": "high", "browser_channel": "", "browser_path": "",
                     # style: "auto" = the project's style (1, 2A, 2B, 3, 4, 5), or a pack name to force one
                     # mood: "auto" = colours follow each beat's content, "off" = the style's own colours, or a mood name
-                    "style": "auto", "mood": "auto"},
+                    "style": "auto", "mood": "auto", "animation_pack": "auto"},
     },
     "voice": {"tts": "auto", "kokoro_voice_male": "am_michael", "kokoro_voice_female": "af_heart",
               "piper_model": "", "max_speedup": 1.3},

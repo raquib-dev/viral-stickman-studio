@@ -12,13 +12,14 @@ import Niche from "./pages/Niche";
 import Package from "./pages/Package";
 import Patterns from "./pages/Patterns";
 import Render from "./pages/Render";
+import SceneEditor from "./pages/SceneEditor";
 import Settings from "./pages/Settings";
 import Studio from "./pages/Studio";
 import Topics from "./pages/Topics";
 
 const PAGES: Record<string, () => JSX.Element> = {
   niche: Niche, discover: Discover, patterns: Patterns, topics: Topics, studio: Studio, render: Render,
-  package: Package, learn: Learn, activity: Activity,
+  package: Package, learn: Learn, activity: Activity, scene: SceneEditor,
 };
 
 function ProjectRoute() {

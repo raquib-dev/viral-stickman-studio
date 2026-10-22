@@ -293,6 +293,156 @@ def project_jobs(slug: str) -> list[dict]:
     return db.list_jobs(slug)
 
 
+# ---- three.js: catalog, AI-drawn props, scene editor ------------------------------------------
+
+class SceneIn(BaseModel):
+    scene: dict
+    t: float = 2.0
+
+
+class PropIn(BaseModel):
+    name: str = ""
+    describe: str = ""
+
+
+@app.get("/api/projects/{slug}/threejs/catalog")
+def threejs_catalog(slug: str) -> dict:
+    _project_or_404(slug)
+    from .render import assets as A
+    from .render import threejs as tj
+    return {**tj.CATALOG, "assets": A.list_assets(slug), "renderer": tj.status()}
+
+
+@app.get("/api/projects/{slug}/assets")
+def project_assets(slug: str) -> list[dict]:
+    _project_or_404(slug)
+    from .render import assets as A
+    return A.list_assets(slug)
+
+
+@app.post("/api/projects/{slug}/assets")
+async def draw_new_prop(slug: str, body: PropIn) -> dict:
+    _project_or_404(slug)
+    if not body.name.strip():
+        raise HTTPException(400, "give the prop a name")
+    job_id, _ = manager.submit(slug, "draw_prop", {"name": body.name.strip(), "describe": body.describe.strip()})
+    return {"job_id": job_id}
+
+
+@app.post("/api/projects/{slug}/assets/{key}/redraw")
+async def redraw_prop(slug: str, key: str, body: PropIn) -> dict:
+    _project_or_404(slug)
+    job_id, _ = manager.submit(slug, "draw_prop", {"key": key, **({"describe": body.describe} if body.describe else {})})
+    return {"job_id": job_id}
+
+
+@app.post("/api/projects/{slug}/assets/{key}/library")
+def prop_to_library(slug: str, key: str) -> dict:
+    _project_or_404(slug)
+    from .render import assets as A
+    try:
+        f = A.to_library(slug, key)
+    except KeyError:
+        raise HTTPException(404, f"no prop {key!r}")
+    return {"saved": str(f.relative_to(paths.REPO_ROOT)) if f.is_relative_to(paths.REPO_ROOT) else str(f)}
+
+
+def _scene_ctx(slug: str, n: int):
+    from .stages.production import clip_spec_for, StageError
+    try:
+        return clip_spec_for(slug, n)
+    except StageError as e:
+        raise HTTPException(400, str(e))
+
+
+def _embed_assets(slug: str, scene: dict) -> None:
+    from .render import assets as A
+    for pr in scene.get("props", []):
+        t = str(pr.get("type", ""))
+        if t == "new":
+            raise HTTPException(400, f"“{pr.get('asset', 'new prop')}” is not drawn yet: draw it in the props gallery first")
+        if t.startswith("custom:") and t[7:] not in (scene.get("assets") or {}):
+            a = A.find_asset(slug, t[7:])
+            if not a:
+                raise HTTPException(400, f"no drawn prop {t[7:]!r}")
+            scene.setdefault("assets", {})[t[7:]] = {k: v for k, v in a.items() if not k.startswith("_")}
+
+
+@app.get("/api/projects/{slug}/scenes/{n}")
+def get_scene(slug: str, n: int) -> dict:
+    _project_or_404(slug)
+    from .render import threejs as tj
+    sp, talk, ctx = _scene_ctx(slug, n)
+    f = ctx.path(f"scenes/clip-{n:02d}.json")
+    if f.exists():
+        return {"scene": json.loads(f.read_text(encoding="utf-8")), "source": "file", "talk": talk, "vo": sp.vo}
+    return {"scene": tj.auto_scene(sp, ctx.settings["render"].get("threejs", {}), talk), "source": "draft", "talk": talk, "vo": sp.vo}
+
+
+@app.post("/api/projects/{slug}/scenes/{n}/check")
+def check_scene(slug: str, n: int, body: SceneIn) -> dict:
+    _project_or_404(slug)
+    from .render import assets as A
+    from .render import threejs as tj
+    from .render.media import dims
+    sp, _, _ = _scene_ctx(slug, n)
+    w, h = dims(sp.ratio, sp.resolution)
+    scene, fixes, errors = tj.check_and_repair(body.scene, sp.vo, sp.duration, h > w, {a["key"] for a in A.list_assets(slug)})
+    return {"scene": scene, "fixes": fixes, "errors": errors}
+
+
+@app.put("/api/projects/{slug}/scenes/{n}")
+def save_scene(slug: str, n: int, body: SceneIn) -> dict:
+    res = check_scene(slug, n, body)
+    if res["errors"]:
+        raise HTTPException(400, "; ".join(res["errors"]))
+    scene = res["scene"]
+    _embed_assets(slug, scene)
+    scene.update({"_planned_by": "editor", "_fixes": res["fixes"], "_saved_at": time.time()})
+    sp, _, ctx = _scene_ctx(slug, n)
+    f = ctx.path(f"scenes/clip-{n:02d}.json")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(scene, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    idx_f = ctx.path("scenes/index.json")
+    index = json.loads(idx_f.read_text(encoding="utf-8")) if idx_f.exists() else {}
+    hero = scene["actors"][0]
+    moods = scene["mood"] if isinstance(scene["mood"], list) else [{"mood": scene["mood"]}]
+    index[str(n)] = {**index.get(str(n), {}), "planned_by": "editor", "notes": "edited by you", "fixes": res["fixes"],
+                     "style": scene.get("style"), "moods": [m["mood"] for m in moods],
+                     "gestures": [g["gesture"] for g in hero.get("gestures", [])],
+                     "props": [(scene.get("assets", {}).get(pr["type"][7:], {}).get("name", pr["type"][7:]) + " ✦")
+                               if pr["type"].startswith("custom:") else pr["type"] for pr in scene.get("props", [])],
+                     "actors": len(scene["actors"]), "panels": len(scene.get("panels") or []),
+                     "badges": [b["text"] for b in scene.get("badges") or []],
+                     "shots": [(k["shot"] if isinstance(k.get("shot"), str) else (k.get("shot") or {}).get("type", "custom")) for k in scene["camera"]],
+                     "updated_at": time.time(), "file": f"scenes/clip-{n:02d}.json"}
+    idx_f.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+    return {"scene": scene, "fixes": res["fixes"]}
+
+
+@app.post("/api/projects/{slug}/scenes/{n}/preview")
+async def preview_scene(slug: str, n: int, body: SceneIn) -> dict:
+    res = check_scene(slug, n, body)
+    if res["errors"]:
+        raise HTTPException(400, "; ".join(res["errors"]))
+    scene = res["scene"]
+    _embed_assets(slug, scene)
+    from .render import threejs as tj
+    from .render.base import RenderError
+    sp, _, ctx = _scene_ctx(slug, n)
+    vertical = sp.ratio == "9:16"
+    scene.update({"width": 360 if vertical else 640, "height": 640 if vertical else 360, "fps": 24, "duration": sp.duration,
+                  "quality": "medium"})
+    out = ctx.path(f"scenes/preview/clip-{n:02d}.png")
+    try:
+        png = await tj.render_still(scene, out, max(0.0, min(body.t, sp.duration - 0.05)))
+    except RenderError as e:
+        raise HTTPException(500, str(e))
+    if png is None:
+        raise HTTPException(409, "the three.js renderer is not ready: cd renderer; npm install; npm run build")
+    return {"image": f"scenes/preview/clip-{n:02d}.png", "t": body.t, "fixes": res["fixes"], "at": time.time()}
+
+
 @app.get("/api/jobs/{job_id}")
 def job_detail(job_id: int, after: int = 0) -> dict:
     j = db.get_job(job_id)

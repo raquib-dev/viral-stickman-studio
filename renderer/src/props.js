@@ -104,9 +104,76 @@ export const PROPS = {
 
 export const PROP_TYPES = Object.keys(PROPS);
 
-export function buildProp(spec, mats) {
+// ---- AI-drawn props (Phase 4) ------------------------------------------------------------------
+// An AI-drawn prop is DATA: a list of low-poly shapes, each with a colour ROLE (never a free colour, so
+// the prop takes the video's palette and mood) and an optional motion. The Python side validates and
+// normalises it (assets.py); the renderer only builds what is listed here.
+export const ASSET_SHAPES = ["box", "sphere", "ico", "cylinder", "cone", "torus", "capsule", "pyramid", "wedge"];
+export const ASSET_COLORS = ["accent", "ink", "card", "dark", "metal", "gold", "wood", "green", "red", "glow", "glass"];
+export const ASSET_MOTIONS = ["swing", "spin", "bob", "pulse", "flap"];
+
+function shapeGeometry(shape, size) {
+  const [a = 0.1, b = a, c = a] = size ?? [];
+  switch (shape) {
+    case "box": return new THREE.BoxGeometry(a, b, c);
+    case "sphere": return new THREE.SphereGeometry(a, 8, 6);
+    case "ico": return new THREE.IcosahedronGeometry(a, 0);
+    case "cylinder": return new THREE.CylinderGeometry(a, b, c, 8);
+    case "cone": return new THREE.ConeGeometry(a, b, 8);
+    case "torus": return new THREE.TorusGeometry(a, b, 5, 12, c > 0 && c <= Math.PI * 2 ? c : Math.PI * 2);
+    case "capsule": return new THREE.CapsuleGeometry(a, b, 3, 8);
+    case "pyramid": return new THREE.ConeGeometry(a, b, 4);
+    case "wedge": {
+      const sh = new THREE.Shape();
+      sh.moveTo(-a / 2, 0); sh.lineTo(a / 2, 0); sh.lineTo(-a / 2, b); sh.closePath();
+      const g = new THREE.ExtrudeGeometry(sh, { depth: c, bevelEnabled: false });
+      g.translate(0, -b / 2, -c / 2);
+      return g;
+    }
+    default: return new THREE.IcosahedronGeometry(a, 0);
+  }
+}
+
+function buildAsset(g, def, mats) {
+  const D = Math.PI / 180;
+  for (const pt of def.parts ?? []) {
+    if (!ASSET_SHAPES.includes(pt.shape)) continue;
+    const mat = mats[ASSET_COLORS.includes(pt.color) ? pt.color : "accent"];
+    const m = new THREE.Mesh(shapeGeometry(pt.shape, pt.size), mat);
+    const [rx = 0, ry = 0, rz = 0] = pt.rot ?? [];
+    m.position.set(...(pt.pos ?? [0, 0, 0]));
+    m.rotation.set(rx * D, ry * D, rz * D);
+    if (pt.scale) m.scale.set(...pt.scale);
+    m.castShadow = true; m.receiveShadow = true;
+    m.userData.motion = ASSET_MOTIONS.includes(pt.motion?.type) ? pt.motion : null;
+    m.userData.rest = { pos: m.position.clone(), rot: m.rotation.clone(), scale: m.scale.clone() };
+    g.add(m);
+  }
+  if (def.grip) g.userData.grip = def.grip;
+  if (def.glow) g.userData.light = true;
+}
+
+function animateAssetParts(inner, it, seed) {
+  for (const m of inner.children) {
+    const mo = m.userData.motion;
+    if (!mo) continue;
+    const r = m.userData.rest, w = Math.PI * 2 * (mo.speed ?? 0.8);
+    const axis = ["x", "y", "z"].includes(mo.axis) ? mo.axis : "z";
+    const amt = mo.amount ?? 20;
+    m.position.copy(r.pos); m.rotation.copy(r.rot); m.scale.copy(r.scale);
+    if (mo.type === "swing") m.rotation[axis] += Math.sin(it * w + seed) * amt * Math.PI / 180;
+    if (mo.type === "flap") m.rotation[axis] += Math.abs(Math.sin(it * w + seed)) * amt * Math.PI / 180;
+    if (mo.type === "spin") m.rotation[axis] += it * w;
+    if (mo.type === "bob") m.position.y += Math.sin(it * w + seed) * (amt > 1 ? amt / 1000 : amt);
+    if (mo.type === "pulse") m.scale.multiplyScalar(1 + 0.08 * Math.sin(it * w + seed));
+  }
+}
+
+export function buildProp(spec, mats, assets = {}) {
   const g = new THREE.Group();
-  (PROPS[spec.type] ?? PROPS.question)(g, mats);
+  const custom = typeof spec.type === "string" && spec.type.startsWith("custom:") ? assets[spec.type.slice(7)] : null;
+  if (custom) buildAsset(g, custom, mats);
+  else (PROPS[spec.type] ?? PROPS.question)(g, mats);
   const inner = new THREE.Group();
   inner.add(...g.children);
   inner.userData = g.userData;
@@ -158,6 +225,7 @@ export function animateProp(p, t, seed, pal, hand) {
   const hm = find("hand_m"), hh = find("hand_h");
   if (hm) { hm.rotation.z = -it * 2.4; hm.position.set(Math.sin(it * 2.4) * 0.07, Math.cos(it * 2.4) * 0.07, 0.03); }
   if (hh) { hh.rotation.z = -it * 0.3; hh.position.set(Math.sin(it * 0.3) * 0.045, Math.cos(it * 0.3) * 0.045, 0.035); }
+  animateAssetParts(p.inner, it, seed);
   const fl = find("flame");
   if (fl) fl.scale.set(1, 0.85 + 0.25 * Math.abs(noise1(it * 8, seed)), 1);
   for (let k = 0; k < 4; k++) {

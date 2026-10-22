@@ -51,6 +51,17 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
     removes any on-screen number the voiceover does not say. A plan that still fails gets one retry with
     the errors, then the keyword plan is used. Hand-edited plan files (no `_planned_by`) are never
     overwritten.
+15. **AI-drawn props are data and take the palette.** A drawing is a list of low-poly shapes from
+    `asset_shapes`, each coloured by a role from `asset_colors` (never a free colour) with an optional motion
+    from `asset_motions`. `normalize_asset` drops anything else, caps it at 40 parts, and stands it on the
+    floor at a sensible height. Drawings are cached per project and embedded in each scene that uses them,
+    so a render never depends on a file that might change; Redraw updates every scene that uses it.
+16. **Your edits win.** A plan saved from the scene editor (`"_planned_by": "editor"`) or written by hand
+    is never replaced by the AI planner, unless you press Re-plan on that clip and confirm.
+17. **Any humanoid animation pack, retargeted by direction.** A pack's skeleton is matched by bone name
+    (this rig, Quaternius/Unreal, Mixamo, Blender), turned to face +Z, and only its bone directions are
+    used, so it drives the same stick figure. Core moves prefer the pack's versions; `pack:<clip>` names any
+    other pack clip. Without a pack, everything still works on the base rig.
 
 ## Scene plan (version 2)
 
@@ -70,7 +81,10 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
     "talk": [[0.4, 6.0]],                                              // or "mouth": {fps, values[]} from the voice
     "hat": "crown", "color": "#f1ece4", "limbs": "bendy"                 // bendy (default) | rigid
   }],
+  "assets": { "dragon": { "height": 0.8, "parts": [{ "shape": "capsule", "size": [0.15, 0.4], "pos": [0, 0.3, 0], "color": "green",
+               "motion": { "type": "flap", "axis": "x", "amount": 25 } }] } },   // AI-drawn props, embedded
   "props": [{ "id": "p1", "type": "coins", "pos": [0.55, 0, 0.15], "t_in": 1.0, "enter": "drop", "idle": "bob" },
+            { "type": "custom:dragon", "pos": [-0.6, 0, 0.1] },
             { "type": "mug", "hold": { "actor": "hero", "hand": "R", "t": 0.6 } }],
   "panels": [{ "title": "theme/dark.ts", "lines": ["export const dark = {"], "t_in": 4.6, "pos": [0.6, 1.08, -0.3] },
              { "kind": "note", "title": "Three rules", "lines": ["Pay yourself first"], "pos": [0, 2.2, -1] }],

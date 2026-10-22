@@ -27,3 +27,4 @@ Thumbs.db
 /frontend/test-results/
 /frontend/playwright-report/
 *.tsbuildinfo
+/renderer/public/models/anim-pack.glb

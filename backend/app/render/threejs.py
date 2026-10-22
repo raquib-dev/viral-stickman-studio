@@ -102,6 +102,8 @@ def status() -> dict:
     out = {"node": bool(node), "built": (RENDERER / "dist" / "index.html").exists(),
            "deps": (RENDERER / "node_modules" / "playwright-core").exists()}
     out["ok"] = all(out.values())
+    # optional humanoid animation pack (more human walking/running/idle); used when present
+    out["pack"] = any((RENDERER / d / "models" / "anim-pack.glb").exists() for d in ("public", "dist"))
     if not out["ok"]:
         out["fix"] = ("install Node.js 20+" if not node else "") + \
                      ("" if out["deps"] and out["built"] else " · cd renderer; npm install; npm run build")
@@ -215,7 +217,7 @@ def auto_scene(clip: ClipSpec, settings: dict, talk: tuple[float, float]) -> dic
     return scene
 
 
-def validate_scene(s: dict) -> list[str]:
+def validate_scene(s: dict, extra_ids: set | None = None) -> list[str]:
     """Names must exist in the renderer's catalog (catalog.json), so a plan never renders something wrong."""
     C, errs = CATALOG, []
     style = s.get("style")
@@ -225,9 +227,11 @@ def validate_scene(s: dict) -> list[str]:
     for m in ([{"mood": moods}] if isinstance(moods, str) else moods):
         if m.get("mood") not in C["moods"]:
             errs.append(f"unknown mood {m.get('mood')!r}")
-    ids = {a.get("id") for a in s.get("actors", [])} | {p.get("id") for p in s.get("props", [])} | {"camera", "other"}
+    ids = {a.get("id") for a in s.get("actors", [])} | {p.get("id") for p in s.get("props", [])} | {"camera", "other"} | (extra_ids or set())
     for a in s.get("actors", []):
-        errs += [f"unknown clip {k.get('clip')!r}" for k in a.get("anim", []) if k.get("clip") not in C["clips"]]
+        # "pack:<name>" clips come from the optional animation pack (checked by the renderer, Idle if absent)
+        errs += [f"unknown clip {k.get('clip')!r}" for k in a.get("anim", [])
+                 if k.get("clip") not in C["clips"] and not str(k.get("clip", "")).startswith("pack:")]
         errs += [f"unknown expression {k.get('expr')!r}" for k in a.get("face", []) if k.get("expr") not in C["expressions"]]
         errs += [f"unknown gesture {g.get('gesture')!r}" for g in a.get("gestures", []) if g.get("gesture") not in C["gestures"]]
         if a.get("hat", "none") not in C["hats"]:
@@ -236,7 +240,9 @@ def validate_scene(s: dict) -> list[str]:
             tgt = g.get("target", g.get("at"))
             if isinstance(tgt, str) and tgt not in ids and tgt not in ("left", "right", "up", "down", "none"):
                 errs.append(f"unknown target {tgt!r}")
-    errs += [f"unknown prop {p.get('type')!r}" for p in s.get("props", []) if p.get("type") not in C["props"]]
+    assets = s.get("assets") or {}
+    errs += [f"unknown prop {p.get('type')!r}" for p in s.get("props", [])
+             if p.get("type") not in C["props"] and not (str(p.get("type", "")).startswith("custom:") and p["type"][7:] in assets)]
     for k in s.get("camera", []):
         shot = k.get("shot")
         kind = shot if isinstance(shot, str) else (shot or {}).get("type")
@@ -309,6 +315,8 @@ class ThreeJSBackend:
             scene = auto_scene(clip, self.cfg, talk)
         w, h = dims(clip.ratio, clip.resolution)
         scene.update({"width": w, "height": h, "fps": fps, "duration": clip.duration})
+        if self.cfg.get("animation_pack", "auto") == "off":
+            scene["pack"] = False
         errs = validate_scene(scene)
         if errs:
             raise RenderError(f"scene plan is invalid: {'; '.join(errs[:4])}", retryable=False)
@@ -358,6 +366,9 @@ class ThreeJSBackend:
             except json.JSONDecodeError:
                 continue
             if ev.get("event") == "info":
+                if ev.get("pack"):
+                    log(f"clip {clip.index + 1}: animation pack in use ({len(ev['pack']['clips'])} clips; "
+                        f"{', '.join(f'{k}→{v}' for k, v in list(ev['pack']['aliases'].items())[:5])})")
                 gpu = ev.get("gpu", "")
                 soft = "swiftshader" in gpu.lower() or "llvmpipe" in gpu.lower()
                 log(f"clip {clip.index + 1}: rendering {ev['frames']} frames on {gpu}"
@@ -388,7 +399,8 @@ def _nums(text: str) -> set[str]:
     return {m.group(0).replace(",", "").rstrip(".") for m in DIGITS.finditer(text or "")}
 
 
-def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = True) -> tuple[dict, list[str], list[str]]:
+def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = True,
+                     known_assets: set | None = None) -> tuple[dict, list[str], list[str]]:
     """Make an AI-written plan safe to render. Unknown names fall back to safe defaults, times and positions
     are clamped into the clip and the frame, clutter is trimmed, and on-screen numbers the voiceover does not
     say are removed (never invent a statistic). Returns (scene, fixes made, errors that remain)."""
@@ -421,7 +433,7 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
     ids = {a.get("id") for a in actors} | set(prop_ids) | {"camera"}
     for a in actors:
         for k in a.get("anim", []):
-            if k.get("clip") not in C["clips"]:
+            if k.get("clip") not in C["clips"] and not str(k.get("clip", "")).startswith("pack:"):
                 fixes.append(f"clip {k.get('clip')!r} -> Idle"); k["clip"] = "Idle"
             k["t"] = T(k.get("t"))
         for k in a.get("face", []):
@@ -457,8 +469,12 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
                 a[key] = sorted(a[key], key=lambda k: k["t"])
     s["actors"] = actors
     props = []
+    assets = s.get("assets") or {}
     for p in s.get("props") or []:
-        if p.get("type") not in C["props"]:
+        t = str(p.get("type", ""))
+        pending = t == "new" and p.get("asset")                     # to be drawn by the scene_plan stage
+        custom = t.startswith("custom:") and (t[7:] in assets or t[7:] in (known_assets or ()))
+        if t not in C["props"] and not pending and not custom:
             fixes.append(f"dropped prop {p.get('type')!r}"); continue
         if p.get("pos") is not None:
             p["pos"] = clampv(p["pos"], [-xr, 0, -2.5], [xr, 2.4, 1.2])
@@ -499,4 +515,40 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
         if tr.get(side, "none") not in C["transitions"]:
             fixes.append(f"transition {tr[side]!r} -> none"); tr[side] = "none"
     s["transition"] = tr
-    return s, fixes, validate_scene(s)
+    # pending AI-drawn props and library props are resolved by the caller; validate the rest
+    probe = {**s, "props": [p for p in s["props"] if p.get("type") != "new" and not (
+        str(p.get("type", "")).startswith("custom:") and p["type"][7:] not in (s.get("assets") or {}))]}
+    return s, fixes, validate_scene(probe, {p.get("id") for p in s["props"]})
+
+
+async def render_still(scene: dict, out_png: Path, t: float = 1.0, timeout: float = 180) -> Path | None:
+    """One PNG frame of a scene (prop previews, editor previews). None when the renderer is not ready."""
+    if not status()["ok"]:
+        return None
+    import tempfile
+    work = Path(tempfile.mkdtemp(prefix="vss-still-"))
+    sp = work / "scene.json"
+    sp.write_text(json.dumps(scene), encoding="utf-8")
+    env = {**__import__("os").environ, "FFMPEG_PATH": ffmpeg_bin()}
+    cfg = load_settings()["render"].get("threejs", {})
+    if cfg.get("browser_path"):
+        env["VSS_BROWSER_PATH"] = cfg["browser_path"]
+    if cfg.get("browser_channel"):
+        env["VSS_BROWSER_CHANNEL"] = cfg["browser_channel"]
+    proc = await asyncio.create_subprocess_exec(shutil.which("node") or "node", str(RENDERER / "render.mjs"), "--scene", str(sp),
+                                                "--stills", f"{t:.2f}", "--out-dir", str(work), cwd=str(RENDERER), env=env,
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise RenderError("preview render timed out", retryable=False)
+    png = work / f"still-{t:.2f}.png"
+    if proc.returncode != 0 or not png.exists():
+        msg = next((json.loads(x).get("message") for x in out.decode(errors="replace").splitlines()
+                    if x.startswith("{") and '"error"' in x), None)
+        raise RenderError(f"preview failed: {msg or err.decode(errors='replace')[-300:]}", retryable=False)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(png), out_png)
+    shutil.rmtree(work, ignore_errors=True)
+    return out_png

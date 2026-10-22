@@ -126,7 +126,7 @@ async def test_hand_edited_plans_are_kept_and_failures_fall_back(monkeypatch):
     s2 = json.loads((root / "scenes/clip-02.json").read_text())
     assert s2["_planned_by"] == "keywords" and tj.validate_scene(s2) == []
     logs = " ".join(l["text"] for l in db.job_logs(job["id"]))
-    assert "keeping your hand-edited" in logs and "using the keyword plan" in logs
+    assert "keeping your edited" in logs and "using the keyword plan" in logs
     await manager.stop()
 
 

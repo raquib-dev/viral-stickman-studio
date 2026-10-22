@@ -102,6 +102,92 @@ def render_spend(project: str) -> float:
     return sum(j["cost_usd"] for j in db.list_jobs(project, 1000) if j["stage"] == "render")
 
 
+async def _draw_asset(ctx, name: str, describe: str, style: str, key: str) -> dict | None:
+    """Have the writing model draw a prop, check it (one retry with the problems), cache it, render a preview."""
+    from ..agent.runner import AgentError
+    from ..render import assets as A
+    from ..render import threejs as tj
+    feedback = ""
+    for attempt in (1, 2):
+        try:
+            res = await ctx.agent.run(tasks.draw_prop(name, describe, style, tj.CATALOG, feedback), ctx)
+        except AgentError as e:
+            ctx.log(f"prop “{name}”: drawing failed ({str(e)[:160]})", "warn")
+            return None
+        asset, fixes, errs = A.normalize_asset(res)
+        if errs:
+            feedback = "; ".join(errs)
+            ctx.log(f"prop “{name}”: drawing rejected (attempt {attempt}): {feedback}", "warn")
+            continue
+        for f in fixes:
+            ctx.log(f"prop “{name}”: repaired: {f}", "warn")
+        A.save_asset(ctx.project, key, asset, "fixture (dry run)" if res.get("_fixture") else "ai", describe)
+        try:
+            await tj.render_still(A.preview_scene(asset, key, style), ctx.path(f"assets/{key}.png"))
+        except Exception as e:  # a preview is nice to have, never required
+            ctx.log(f"prop “{name}”: no preview image ({str(e)[:160]})", "warn")
+        ctx.log(f"prop “{name}”: drawn by {'the dry-run fixture' if res.get('_fixture') else 'AI'}: "
+                f"{len(asset['parts'])} parts, {asset['height']:.2f} m" + (f" · “{res.get('notes')}”" if res.get("notes") else ""))
+        return asset
+    return None
+
+
+async def _resolve_assets(ctx, scene: dict, style: str) -> None:
+    """Replace "new" props with drawn ones (cached per project or from the library) and embed their drawings."""
+    from ..render import assets as A
+    scene.setdefault("assets", {})
+    kept = []
+    for pr in scene.get("props", []):
+        t = str(pr.get("type", ""))
+        if t == "new" or (t.startswith("custom:") and t[7:] not in scene["assets"]):
+            name = pr.get("asset") or t[7:]
+            key = A.asset_key(name)
+            a = A.find_asset(ctx.project, key)
+            if a:
+                ctx.log(f"prop “{name}”: reusing the drawing in {'the project' if ctx.path(f'assets/{key}.json').exists() else 'your library'}")
+            else:
+                a = await _draw_asset(ctx, name, pr.get("describe", ""), style, key)
+            if not a:
+                ctx.log(f"prop “{name}”: left out of the scene", "warn")
+                continue
+            scene["assets"][key] = {k: v for k, v in a.items() if not k.startswith("_")}
+            pr = {**{k: v for k, v in pr.items() if k not in ("asset", "describe")}, "type": f"custom:{key}"}
+        kept.append(pr)
+    scene["props"] = kept
+    if not scene["assets"]:
+        scene.pop("assets")
+
+
+@stage("draw_prop", "Draw a prop",
+       description="Redraw one AI-drawn prop and update every clip that uses it (Render page → props).")
+async def draw_prop(ctx) -> dict:
+    from ..render import assets as A
+    p = ctx.project_data()
+    key = A.asset_key(ctx.params.get("key") or ctx.params.get("name", ""))
+    old = A.find_asset(ctx.project, key) or {}
+    name = ctx.params.get("name") or old.get("name") or key
+    describe = ctx.params.get("describe") or old.get("_describe", "")
+    style = CATALOG_STYLE(p, ctx.settings)
+    a = await _draw_asset(ctx, name, describe, style, key)
+    if not a:
+        raise StageError(f"could not draw “{name}”")
+    updated = []
+    for f in sorted(ctx.path("scenes").glob("clip-*.json")) if ctx.path("scenes").exists() else []:
+        sc = json.loads(f.read_text(encoding="utf-8"))
+        if key in (sc.get("assets") or {}):
+            sc["assets"][key] = {k: v for k, v in a.items() if not k.startswith("_")}
+            f.write_text(json.dumps(sc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            updated.append(f.name)
+    ctx.log(f"updated {len(updated)} scene(s): {', '.join(updated) or 'none'} (regenerate those clips to see it)")
+    return {"outputs": [f"assets/{key}.json", f"assets/{key}.png"]}
+
+
+def CATALOG_STYLE(p: dict, settings: dict) -> str:
+    from ..render import threejs as tj
+    forced = settings["render"].get("threejs", {}).get("style", "auto")
+    return tj.CATALOG["skill_styles"].get(forced, forced) if forced and forced != "auto" else tj.CATALOG["skill_styles"].get(str(p.get("style", "1")), "minimal")
+
+
 @stage("scene_plan", "Plan 3D scenes",
        description="AI scene plan per clip for the three.js renderer: checked, repaired, keyword plan as fallback.")
 async def scene_plan(ctx) -> dict:
@@ -126,8 +212,8 @@ async def scene_plan(ctx) -> dict:
         rel = f"scenes/clip-{sp.index + 1:02d}.json"
         old = ctx.read_json(rel, default={}) if ctx.path(rel).exists() else {}
         key = _prompt_hash(f"{sp.vo}|{sp.prompt}|{tj.style_for(sp, cfg)}|{cfg.get('mood', 'auto')}|{sp.ratio}")
-        if old and "_planned_by" not in old and not force:
-            ctx.log(f"clip {sp.index + 1}: keeping your hand-edited {rel}")
+        if old and (("_planned_by" not in old) or old.get("_planned_by") == "editor") and not ctx.params.get("overwrite_edits"):
+            ctx.log(f"clip {sp.index + 1}: keeping your edited {rel}")
             continue
         if old.get("_key") == key and not force:
             ctx.log(f"clip {sp.index + 1}: plan is up to date")
@@ -138,17 +224,20 @@ async def scene_plan(ctx) -> dict:
         row = a["rows"][sp.index] if sp.index < len(a.get("rows", [])) else {}
         w, h = dims(sp.ratio, sp.resolution)
         scene, fixes, errs, by, notes, feedback = draft, [], [], "keywords", "", ""
+        from ..render import assets as A
+        known = A.list_assets(ctx.project)
         for attempt in (1, 2):
             try:
                 res = await ctx.agent.run(tasks.scene_plan(sp.index + 1, len(specs), row, sp.vo, draft["style"], draft["theme"],
-                                                           sp.ratio, sp.duration, list(talk), tj.CATALOG, draft, feedback), ctx)
+                                                           sp.ratio, sp.duration, list(talk), tj.CATALOG, draft, feedback,
+                                                           [{"key": k["key"], "name": k["name"]} for k in known]), ctx)
             except AgentError as e:
                 ctx.log(f"clip {sp.index + 1}: AI plan failed ({str(e)[:200]}); using the keyword plan", "warn")
                 break
             body = {k: v for k, v in res.items() if k not in ("notes", "_fixture")}
             candidate = {**{k: draft[k] for k in ("version", "width", "height", "fps", "duration", "style", "theme", "seed", "quality")}, **body}
             candidate.setdefault("transition", draft["transition"])
-            fixed, fx, er = tj.check_and_repair(candidate, sp.vo, sp.duration, h > w)
+            fixed, fx, er = tj.check_and_repair(candidate, sp.vo, sp.duration, h > w, {k["key"] for k in known})
             if not er:
                 scene, fixes, by, notes = fixed, fx, "fixture (dry run)" if res.get("_fixture") else "ai", res.get("notes", "")
                 break
@@ -159,6 +248,7 @@ async def scene_plan(ctx) -> dict:
             ctx.log(f"clip {sp.index + 1}: using the keyword plan after {len(errs)} problem(s) in the AI plan", "warn")
         for f in fixes:
             ctx.log(f"clip {sp.index + 1}: repaired: {f}", "warn")
+        await _resolve_assets(ctx, scene, scene.get("style", draft["style"]))
         scene.update({"_planned_by": by, "_key": key, "_notes": notes, "_fixes": fixes})
         ctx.write_json(rel, scene)
         hero = scene["actors"][0]
@@ -166,7 +256,8 @@ async def scene_plan(ctx) -> dict:
         index[str(sp.index + 1)] = {
             "planned_by": by, "notes": notes, "fixes": fixes, "style": scene.get("style"),
             "moods": [m["mood"] for m in moods], "gestures": [g["gesture"] for g in hero.get("gestures", [])],
-            "props": [pr["type"] for pr in scene.get("props", [])], "actors": len(scene["actors"]),
+            "props": [(scene.get("assets", {}).get(pr["type"][7:], {}).get("name", pr["type"][7:]) + " ✦") if pr["type"].startswith("custom:") else pr["type"]
+                      for pr in scene.get("props", [])], "actors": len(scene["actors"]),
             "shots": [(k["shot"] if isinstance(k.get("shot"), str) else (k.get("shot") or {}).get("type", "custom")) for k in scene["camera"]],
             "panels": len(scene.get("panels") or []), "badges": [b_["text"] for b_ in scene.get("badges") or []],
             "updated_at": time.time(), "file": rel}
@@ -445,3 +536,37 @@ async def learn(ctx) -> dict:
     ctx.write_json("research/learn/report.json", {"retention": retention, "read": read, "learned_total": len(learned)})
     ctx.log(f"{len(read['adjustments'])} profile adjustment(s); next video's beat placement will use them")
     return {"outputs": ["research/learn/report.json", "research/learned.json", "research/niche-profile.json"]}
+
+
+class FileCtx:
+    """Just enough of a job context to build clip specs outside a job (scene editor endpoints)."""
+    def __init__(self, project: str):
+        from .. import paths
+        from ..settings import load_settings
+        self.project, self.settings = project, load_settings()
+        self._paths = paths
+
+    def path(self, rel: str) -> Path:
+        return self._paths.safe_project_path(self.project, rel)
+
+    def read_json(self, rel: str, default=None):
+        f = self.path(rel)
+        if not f.exists():
+            if default is not None:
+                return default
+            raise StageError(f"missing input {rel}: run the earlier stage first")
+        return json.loads(f.read_text(encoding="utf-8"))
+
+    def project_data(self) -> dict:
+        return db.get_project(self.project)["data"]
+
+
+def clip_spec_for(project: str, n: int) -> tuple[ClipSpec, tuple[float, float], FileCtx]:
+    ctx = FileCtx(project)
+    specs = _clip_specs(ctx, ctx.project_data())
+    if not 1 <= n <= len(specs):
+        raise StageError(f"clip {n} does not exist (this video has {len(specs)} clips)")
+    sp = specs[n - 1]
+    wpm = float(ctx.settings.get("speaking_wpm", 150))
+    talk = (0.4, round(min(sp.duration - 0.3, 0.4 + len((sp.vo or "").split()) / (wpm / 60)), 2))
+    return sp, talk, ctx

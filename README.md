@@ -242,6 +242,34 @@ retries once, and falls back to the keyword plan, so a render never fails becaus
 Render page shows each clip's plan, its repairs and a **Re-plan** button. The prompt is about 1,200 tokens, so
 it fits a local 8B model's context.
 
+**AI-drawn props.** When no built-in prop fits ("a dragon guards my savings"), the planner asks for a new one
+and the writing model draws it as low-poly shapes (coloured by the palette's roles, with moving parts such as
+wings or a jaw). The app checks it, stands it on the floor at a sensible size, renders a preview, and reuses it
+in every clip. Render page → **Props drawn by AI**: see them, **Redraw** one (every clip using it updates),
+**★ To library** to reuse it in all projects (saved in `config/assets/`), or **✎ Draw prop** yourself by name.
+
+**Scene editor.** Render page → a clip's **✎ Edit** opens it: a timeline of voice, colour, gestures, faces,
+props and camera; rows for every part (moods, gestures and what they point at, faces, body moves, gaze, hats,
+walking in, a second character, props and where they go, badges, note/code panels, camera shots,
+fades); a JSON tab; **Check** (shows what would be repaired), **Preview frame** at any moment (a real render,
+seconds on your GPU), **Save** and **Save & re-render clip**. Saved edits are yours: the AI planner keeps them.
+
+### Animation pack (optional, more human movement)
+
+The base rig's moves come from a robot character. A free CC0 humanoid animation pack makes walking, running,
+idling, sitting and jumping more human:
+
+1. Download Quaternius's **Universal Animation Library** (CC0; the free Standard tier has 45 animations) from
+   https://quaternius.itch.io/universal-animation-library.
+2. Take its glTF/GLB file (or open the FBX in Blender, *File → Export → glTF 2.0*, format **glTF Binary**).
+3. Save it as `renderer/public/models/anim-pack.glb`, then `cd renderer; npm run build`.
+4. Settings → Local services shows **Animation pack: installed**; the render log names the moves it maps
+   (e.g. Walking → Walk_Loop). Settings → Render → Animation pack can turn it off.
+
+Any humanoid rig works (Quaternius/Unreal, Mixamo or Blender bone names): its bones are matched by name, it is
+turned to face the camera, and only its bone directions drive the stick figure. Other pack clips can be used in
+a scene as `"pack:<clip name>"`.
+
 ### ComfyUI on Windows (optional: AI-generated video on your GPU)
 
 1. **Download ComfyUI portable**: https://github.com/comfyanonymous/ComfyUI/releases → latest release →

@@ -25,6 +25,7 @@ from `../ig-reel`.
 | Caveat `@fontsource/caveat 5.2.5` (cozy/prehistoric cards) | https://github.com/googlefonts/caveat | SIL Open Font License 1.1 |
 | EB Garamond `@fontsource/eb-garamond 5.2.5` (historical cards) | https://github.com/octaviopardo/EBGaramond12 | SIL Open Font License 1.1 |
 | playwright-core `1.56.1` (npm), drives the headless browser | https://github.com/microsoft/playwright | Apache-2.0 |
+| Optional, not included: `renderer/public/models/anim-pack.glb`, which you download yourself (e.g. Quaternius "Universal Animation Library") | https://quaternius.itch.io/universal-animation-library | CC0 1.0 (per its listing) |
 
 ## Read-only references (not committed)
 

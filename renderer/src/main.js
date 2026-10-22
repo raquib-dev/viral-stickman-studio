@@ -18,8 +18,8 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import catalog from "../catalog.json";
 import { buildLights, buildSet } from "./env.js";
-import { PROPS, animateProp, buildProp, propMaterials } from "./props.js";
-import { CLIPS, EXPRESSIONS, GESTURES, HATS, Stickman, loadRig } from "./rig.js";
+import { ASSET_COLORS, ASSET_MOTIONS, ASSET_SHAPES, PROPS, animateProp, buildProp, propMaterials } from "./props.js";
+import { CLIPS, EXPRESSIONS, GESTURES, HATS, Stickman, loadPack, loadRig } from "./rig.js";
 import { MOODS, SKILL_STYLE, STYLES, mixPalette, resolvePalette } from "./styles.js";
 import { clamp, ease, lerp, noise1, segment, stepFade } from "./util.js";
 import { LEGACY_THEMES, animateElement, badge, panel } from "./world.js";
@@ -88,15 +88,18 @@ async function load(spec) {
   const camera = new THREE.PerspectiveCamera(35, W / H, 0.05, 80);
 
   const gltf = await loadRig(spec.rig ?? "./models/stickman-rig.glb");
+  // optional humanoid animation pack: more human locomotion; absent -> the base rig only
+  const pack = spec.pack === false ? null : await loadPack(spec.pack_url ?? "./models/anim-pack.glb");
   const actors = (spec.actors ?? []).map((a, i) => {
     const s = new Stickman(gltf, { SkeletonUtils, color: a.color ?? `#${pal0.ink.getHexString()}`, seed: (spec.seed ?? 1) + i * 17,
-      material: style.char.material, roughness: style.char.roughness, hat: a.hat, hatColor: a.hat_color, limbs: a.limbs ?? spec.limbs });
+      material: style.char.material, roughness: style.char.roughness, hat: a.hat, hatColor: a.hat_color, limbs: a.limbs ?? spec.limbs,
+      pack });
     scene.add(s.group);
     return { spec: a, rig: s, id: a.id ?? `actor${i}` };
   });
   const propMats = propMaterials();
   const props = (spec.props ?? []).map((p, i) => {
-    const pr = buildProp(p, propMats);
+    const pr = buildProp(p, propMats, spec.assets ?? {});
     scene.add(pr.group);
     return { ...pr, id: p.id ?? `${p.type}${i}` };
   });
@@ -130,8 +133,10 @@ async function load(spec) {
     vertical: H > W, fps: spec.fps ?? 24, frames: Math.round((spec.duration ?? 10) * (spec.fps ?? 24)),
     gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "unknown",
   });
+  const packSrc = actors[0]?.rig.pack;
+  state.packInfo = packSrc ? { clips: Object.keys(packSrc.actions), aliases: packSrc.alias } : null;
   return { frames: state.frames, fps: state.fps, width: W, height: H, gpu: state.gpu, style: look.style, theme: look.theme,
-    moods: look.mood.map((m) => m.mood) };
+    moods: look.mood.map((m) => m.mood), pack: state.packInfo };
 }
 
 // ---- time-dependent pieces -------------------------------------------------------------------
@@ -305,7 +310,7 @@ function frame(i) {
 function liveCatalog() {
   return { styles: Object.keys(STYLES), moods: Object.keys(MOODS), props: Object.keys(PROPS), gestures: GESTURES, hats: HATS,
     clips: CLIPS, expressions: Object.keys(EXPRESSIONS), shots: [...Object.keys(SHOTS), "two_shot", "over_shoulder"],
-    transitions: ["none", "fade", "iris", "wipe"] };
+    transitions: ["none", "fade", "iris", "wipe"], asset_shapes: ASSET_SHAPES, asset_colors: ASSET_COLORS, asset_motions: ASSET_MOTIONS };
 }
 
 window.vss = { load, frame, catalog: liveCatalog, fileCatalog: catalog, get ready() { return true; } };

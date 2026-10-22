@@ -281,7 +281,8 @@ DURATION: {duration}s"""
 # ---- 3D scene planning (local-threejs renderer) ------------------------------------------------
 
 def scene_plan(clip: int, count: int, row: dict, vo: str, style: str, theme: str, ratio: str, duration: float,
-               talk: list, catalog: dict, draft: dict, feedback: str = "") -> AgentTask:
+               talk: list, catalog: dict, draft: dict, feedback: str = "", assets: list | None = None) -> AgentTask:
+    assets = assets or []
     lists = {k: catalog[k] for k in ("moods", "clips", "expressions", "gestures", "props", "hats", "shots", "transitions")}
     vertical = ratio == "9:16"
     prompt = f"""Following the director's approved Phase A intent (one clear action per beat, continuity between
@@ -296,6 +297,8 @@ Improve the DRAFT below (a keyword planner's guess) so the scene shows what this
   the second where the turn is spoken (inside the voiceover window).
 - 1-3 gestures timed to the words they illustrate; a facial expression arc; optional clip ("anim") moments.
 - at most 2 props that are concrete things the line mentions or implies; a prop can be held (hold) or placed (pos).
+  If no listed prop fits, use one already drawn for this project ({_j(assets)}) as "type": "custom:<key>", or ask for
+  a NEW one (at most 1 per clip): {{"type": "new", "asset": "<2-3 word name>", "describe": "<what it looks like>", ...}}.
 - optional: one "note" panel (title + up to 3 lines of max 28 characters, using the voiceover's own words) or, for
   software topics only, one "code" panel (title is a file name, up to 3 short lines of plausible code).
 - a badge only if the voiceover says a number; its text must use that exact number.
@@ -321,4 +324,27 @@ DRAFT:
     # crowd a local model's context (the plan itself needs the room)
     return AgentTask("scene_plan", prompt, schema, [], "direction",
                      {"clip": clip, "count": count, "row": row, "vo": vo, "style": style, "theme": theme, "ratio": ratio,
-                      "duration": duration, "talk": talk, "catalog": catalog, "draft": draft, "feedback": feedback})
+                      "duration": duration, "talk": talk, "catalog": catalog, "draft": draft, "feedback": feedback,
+                      "assets": assets})
+
+
+def draw_prop(name: str, describe: str, style: str, catalog: dict, feedback: str = "") -> AgentTask:
+    prompt = f"""Draw a prop for a low-poly 3D stick-figure video (style "{style}") as DATA: a list of simple shapes.
+PROP: {name}. WHAT IT SHOULD LOOK LIKE: {describe or name}
+
+Rules:
+- 4 to 30 parts. Shapes: {catalog["asset_shapes"]}. size per shape: box [w,h,d]; sphere/ico [r]; cylinder [r_top,r_bottom,h];
+  cone/pyramid [r,h]; torus [r,tube,arc_radians]; capsule [r,length]; wedge [w,h,d]. Metres; pos is the part's centre;
+  rot in degrees [x,y,z]; +y up, the front faces +z, the prop stands on y=0.
+- colour is a ROLE, never a hex code: {catalog["asset_colors"]} (accent = the video's main colour; glow = lit/emissive).
+- Make it instantly recognisable from the front in silhouette: exaggerate the one or two features that identify it.
+- Optional motion on parts that would move (a jaw, a wing, a wheel, a flame): {{"type": one of {catalog["asset_motions"]},
+  "axis": "x"|"y"|"z", "amount": degrees (or metres for bob), "speed": cycles per second}}. Name moving parts.
+- height: its natural height in metres (a mug 0.12, a dog 0.5, a car 1.4; keep under 1.8). grip: [x,y,z] where a hand
+  would hold it, if it is held.
+{('PREVIOUS DRAWING WAS REJECTED: ' + feedback) if feedback else ''}"""
+    part = {"type": "object", "required": ["shape", "size", "pos", "color"], "additionalProperties": True,
+            "properties": {"shape": STR, "size": _arr(NUM, 1), "pos": _arr(NUM, 3), "rot": _arr(NUM), "color": STR}}
+    schema = _obj({"name": STR, "height": NUM, "parts": _arr(part, 1), "notes": STR}, ["name", "height", "parts"])
+    return AgentTask("draw_prop", prompt, schema, [], "direction",
+                     {"name": name, "describe": describe, "style": style, "catalog": catalog, "feedback": feedback})

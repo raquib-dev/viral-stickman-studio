@@ -36,10 +36,81 @@ const ANKLE = 0.045;          // ankle height above the floor in the rest pose
 const LIMB_R = 0.034;
 const SPINE_R = 0.04;
 
+// Bone names for each logical joint across common humanoid rigs: this project's CC0 rig, Quaternius /
+// Unreal mannequin (upperarm_l, thigh_l...), Mixamo (mixamorig:LeftArm...) and Blender (upper_arm.L...).
+const JOINTS = {
+  Hips: ["hips", "pelvis", "mixamorighips"], Neck: ["neck", "neck01", "mixamorigneck"], Head: ["head", "mixamorighead"],
+  "UpperArm.L": ["upperarml", "mixamorigleftarm", "leftarm", "arml"], "UpperArm.R": ["upperarmr", "mixamorigrightarm", "rightarm", "armr"],
+  "LowerArm.L": ["lowerarml", "forearml", "mixamorigleftforearm", "leftforearm"], "LowerArm.R": ["lowerarmr", "forearmr", "mixamorigrightforearm", "rightforearm"],
+  "Palm2.L": ["palm2l", "handl", "mixamoriglefthand", "lefthand"], "Palm2.R": ["palm2r", "handr", "mixamorigrighthand", "righthand"],
+  "UpperLeg.L": ["upperlegl", "thighl", "upperleglegl", "mixamorigleftupleg", "leftupleg"], "UpperLeg.R": ["upperlegr", "thighr", "mixamorigrightupleg", "rightupleg"],
+  "LowerLeg.L": ["lowerlegl", "calfl", "shinl", "mixamorigleftleg", "leftleg"], "LowerLeg.R": ["lowerlegr", "calfr", "shinr", "mixamorigrightleg", "rightleg"],
+  "Foot.L": ["footl", "mixamorigleftfoot", "leftfoot"], "Foot.R": ["footr", "mixamorigrightfoot", "rightfoot"],
+};
+const norm = (n) => String(n).toLowerCase().replace(/[^a-z0-9]/g, "");
+// pack clips that replace the base rig's robot moves (first match wins)
+const PACK_ALIASES = {
+  Idle: [/^idle$/i, /^idle_?loop$/i, /idle/i], Walking: [/^walk(_?loop)?$/i, /^walk_?f(or)?w(ar)?d/i, /walk/i],
+  Running: [/^(jog|run)(_?f(or)?w(ar)?d)?(_?loop)?$/i, /jog|run|sprint/i], Jump: [/^jump(_?start)?$/i, /jump/i],
+  Sitting: [/^sit(ting)?(_?idle)?(_?loop)?$/i, /sit/i], Standing: [/stand_?up|get_?up/i], Wave: [/wave/i],
+  Yes: [/^yes$|nod/i], No: [/^no$|head_?shake/i], ThumbsUp: [/thumb/i], Punch: [/punch/i], Dance: [/dance/i], Death: [/death|die/i],
+};
+
+class Source {
+  constructor(gltf, SkeletonUtils, parent, kind) {
+    this.kind = kind;
+    this.model = SkeletonUtils.clone(gltf.scene);
+    parent.add(this.model);
+    this.model.traverse((o) => { if (o.isMesh) o.visible = false; });
+    const bones = [];
+    this.model.traverse((o) => { if (o.isBone) bones.push(o); });
+    const byNorm = new Map(bones.map((b) => [norm(b.name), b]));
+    this.map = {};
+    const missing = [];
+    for (const [j, cands] of Object.entries(JOINTS)) {
+      let b = byNorm.get(norm(j)) ?? cands.map((c) => byNorm.get(c)).find(Boolean);
+      // suffix match, e.g. "Armature_mixamorig:LeftArm" or "DEF-upper_arm.L"
+      if (!b) b = bones.find((x) => cands.some((c) => norm(x.name).endsWith(c)));
+      if (b) this.map[j] = b; else missing.push(j);
+    }
+    if (missing.length) throw new Error(`${kind}: no bone for ${missing.join(", ")}`);
+    this.mixer = new THREE.AnimationMixer(this.model);
+    this.actions = {};
+    for (const clip of gltf.animations) {
+      const a = this.mixer.clipAction(clip);
+      a.play();
+      a.setEffectiveWeight(0);
+      this.actions[clip.name] = a;
+    }
+    this.alias = {};
+    if (kind === "pack") {
+      for (const [core, res] of Object.entries(PACK_ALIASES)) {
+        const hit = res.map((re) => Object.keys(this.actions).find((n) => re.test(n))).find(Boolean);
+        if (hit) this.alias[core] = hit;
+      }
+    }
+    this.w = kind === "base" ? 1 : 0;
+    this.mixer.update(0);
+  }
+
+  joint(name) {
+    return this.map[name];
+  }
+}
+
 let gltfCache = null;
 export async function loadRig(url) {
   if (!gltfCache) gltfCache = await new GLTFLoader().loadAsync(url);
   return gltfCache;
+}
+
+/** The optional humanoid animation pack (renderer/public/models/anim-pack.glb); null when absent. */
+export async function loadPack(url) {
+  try {
+    return await new GLTFLoader().loadAsync(url);
+  } catch {
+    return null;
+  }
 }
 
 export class Stickman {
@@ -47,53 +118,107 @@ export class Stickman {
     const { SkeletonUtils } = opts;
     this.opts = { color: "#f1ece4", seed: 1, ...opts };
     this.group = new THREE.Group();
-    this.model = SkeletonUtils.clone(gltfSource.scene);
-    this.group.add(this.model);
-    this.model.traverse((o) => { if (o.isMesh) o.visible = false; });
-    let skinned = null;
-    this.model.traverse((o) => { if (o.isSkinnedMesh && !skinned) skinned = o; });
-    this.bones = Object.fromEntries(skinned.skeleton.bones.map((b) => [b.name, b]));
-    this.mixer = new THREE.AnimationMixer(this.model);
-    this.actions = {};
-    for (const clip of gltfSource.animations) {
-      const a = this.mixer.clipAction(clip);
-      a.play();
-      a.setEffectiveWeight(0);
-      this.actions[clip.name] = a;
+    // skeleton sources: the base CC0 rig, plus an optional humanoid animation pack (any naming scheme).
+    // Only bone DIRECTIONS are read from them, so different skeletons blend and retarget cleanly.
+    this.sources = [new Source(gltfSource, SkeletonUtils, this.group, "base")];
+    if (opts.pack) {
+      try { this.sources.push(new Source(opts.pack, SkeletonUtils, this.group, "pack")); }
+      catch (e) { console.warn("animation pack ignored:", e.message); }
     }
-    this.mixer.update(0);
-    this._measure();
+    this.base = this.sources[0];
+    this.pack = this.sources[1] ?? null;
+    for (const src of this.sources) this._measure(src);
     this._build();
   }
 
-  _bone(name) {
-    // GLTFLoader sanitises node names ("Foot.L" -> "FootL")
-    return this.bones[name] ?? this.bones[name.replace(/[.\s]/g, "")];
+  /** Clip name -> [source, action]. "pack:Name" picks a pack clip; core names prefer the pack's version. */
+  _action(name) {
+    if (name?.startsWith("pack:") && this.pack?.actions[name.slice(5)]) return [this.pack, this.pack.actions[name.slice(5)]];
+    if (this.pack && this.pack.alias[name]) return [this.pack, this.pack.actions[this.pack.alias[name]]];
+    const a = this.base.actions[name] ?? this.base.actions.Idle;
+    return [this.base, a];
   }
 
-  _p(name, out = new THREE.Vector3()) {
-    this._bone(name).getWorldPosition(out);
-    return this.group.worldToLocal(out);
+  _bone(name, src = this.base) {
+    return src.joint(name);
   }
 
-  _measure() {
-    // rest pose: how far the rig's hips sit above its feet, so we can scale the hip height (and with it
-    // jumps and crouches) to our leg length and keep the feet on the floor
-    for (const a of Object.values(this.actions)) a.setEffectiveWeight(0);
+  /** Position of a joint in actor space, from one source (default: blended over the active sources). */
+  _p(name, out = new THREE.Vector3(), src = null) {
+    if (src) {
+      src.joint(name).getWorldPosition(out);
+      return this.group.worldToLocal(out);
+    }
+    const acc = new THREE.Vector3();
+    let wsum = 0;
+    for (const s of this._active()) {
+      acc.addScaledVector(this._p(name, new THREE.Vector3(), s), s.w);
+      wsum += s.w;
+    }
+    return out.copy(acc.divideScalar(wsum || 1));
+  }
+
+  _active() {
+    const act = this.sources.filter((s) => s.w > 1e-4);
+    return act.length ? act : [this.base];
+  }
+
+  _measure(src) {
+    // rest pose: how far this skeleton's hips sit above its feet, so hip height (and with it jumps and
+    // crouches) scales to our leg length and the feet stay on the floor; also face +Z with left at +X
+    for (const a of Object.values(src.actions)) a.setEffectiveWeight(0);
     this.group.updateMatrixWorld(true);
-    const hips = this._p("Hips"), foot = this._p("Foot.L");
-    this.model.position.y -= foot.y;
+    const lr = this._p("UpperArm.L", new THREE.Vector3(), src).sub(this._p("UpperArm.R", new THREE.Vector3(), src)).setY(0);
+    if (lr.lengthSq() > 1e-10) {
+      src.model.rotation.y += Math.atan2(lr.z, lr.x);
+      this.group.updateMatrixWorld(true);
+    }
+    const foot = this._p("Foot.L", new THREE.Vector3(), src);
+    src.model.position.y -= foot.y;
     this.group.updateMatrixWorld(true);
-    const legs = this._legChain(this._p("Hips"), "L", 1);
-    const drop = this._p("Hips").y - legs[2].y;              // hips-to-ankle drop with our lengths
-    this.hipScale = (drop + ANKLE) / Math.max(1e-6, hips.y - foot.y);
+    src.w = 1;
+    const saved = this.sources.map((s) => s.w);
+    this.sources.forEach((s) => { s.w = s === src ? 1 : 0; });
+    const hips = this._p("Hips", new THREE.Vector3(), src);
+    const legs = this._legChain(hips, "L", 1);
+    src.hipScale = (hips.y - legs[2].y + ANKLE) / Math.max(1e-6, hips.y);
+    this.sources.forEach((s, i) => { s.w = saved[i]; });
     const hq = new THREE.Quaternion();
-    this._bone("Head").getWorldQuaternion(hq);
-    this.headBindInv = this.group.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(hq).invert();
+    src.joint("Head").getWorldQuaternion(hq);
+    src.headBindInv = this.group.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(hq).invert();
+  }
+
+  /** Hips position in actor space, scaled to our proportions, blended over the active sources. */
+  _hips() {
+    const acc = new THREE.Vector3();
+    let wsum = 0;
+    for (const s of this._active()) {
+      const r = this._p("Hips", new THREE.Vector3(), s);
+      acc.addScaledVector(new THREE.Vector3(r.x * s.hipScale, r.y * s.hipScale, r.z * s.hipScale), s.w);
+      wsum += s.w;
+    }
+    return acc.divideScalar(wsum || 1);
+  }
+
+  /** Head rotation relative to the rest pose, blended over the active sources. */
+  _headQuat() {
+    const inv = this.group.getWorldQuaternion(new THREE.Quaternion()).invert();
+    let q = null, wsum = 0;
+    for (const s of this._active()) {
+      const hq = new THREE.Quaternion();
+      s.joint("Head").getWorldQuaternion(hq);
+      const local = inv.clone().multiply(hq).multiply(s.headBindInv);
+      if (!q) { q = local; wsum = s.w; continue; }
+      wsum += s.w;
+      q.slerp(local, s.w / wsum);
+    }
+    return q ?? new THREE.Quaternion();
   }
 
   _dir(from, to) {
-    return this._p(to).sub(this._p(from)).normalize();
+    const acc = new THREE.Vector3();
+    for (const s of this._active()) acc.addScaledVector(this._p(to, new THREE.Vector3(), s).sub(this._p(from, new THREE.Vector3(), s)).normalize(), s.w);
+    return acc.lengthSq() > 1e-12 ? acc.normalize() : new THREE.Vector3(0, 1, 0);
   }
 
   _legChain(hipsPos, side, _k) {
@@ -258,27 +383,29 @@ export class Stickman {
 
   /** Pose the bones for time t from the actor's animation track. */
   _animate(track, t, move = 0, dist = 0) {
-    for (const a of Object.values(this.actions)) a.setEffectiveWeight(0);
+    for (const src of this.sources) for (const a of Object.values(src.actions)) a.setEffectiveWeight(0);
     const keys = track?.length ? track : [{ t: 0, clip: "Idle" }];
     const [prev, cur, w] = stepFade(keys, t, 0.35);
+    const add = (a, wt) => a.setEffectiveWeight(a.getEffectiveWeight() + wt);
     const set = (key, weight, start) => {
-      const a = this.actions[key.clip] ?? this.actions.Idle;
+      const [, a] = this._action(key.clip);
       const dur = a.getClip().duration, speed = key.speed ?? 1;
       let local = Math.max(0, t - start) * speed;
-      const loop = key.loop ?? LOOPING.has(key.clip);
+      const base = key.clip?.startsWith("pack:") ? key.clip.slice(5) : key.clip;
+      const loop = key.loop ?? (LOOPING.has(base) || /idle|walk|run|jog|loop/i.test(base ?? ""));
       if (loop) local %= dur;
       else if (local > dur) {
         // one-shot gestures settle back into Idle
         const back = clamp((local - dur) / 0.4);
         a.time = dur - 1e-4;
-        a.setEffectiveWeight(a.getEffectiveWeight() + weight * (1 - back));
-        const idle = this.actions.Idle;
+        add(a, weight * (1 - back));
+        const [, idle] = this._action("Idle");
         idle.time = ((local - dur) / speed) % idle.getClip().duration;
-        idle.setEffectiveWeight(idle.getEffectiveWeight() + weight * back);
+        add(idle, weight * back);
         return;
       }
       a.time = local;
-      a.setEffectiveWeight(a.getEffectiveWeight() + weight);
+      add(a, weight);
     };
     // walking/running when the actor moves along its path: speed (m/s) fades the gait in over the track
     const mv = clamp(move / 0.35);
@@ -286,14 +413,19 @@ export class Stickman {
     if (prev !== cur && w < 1) set(prev, (1 - w) * keep, prev.t);
     set(cur, (prev !== cur ? w : 1) * keep, cur.t);
     if (mv > 0) {
-      const gait = move > 1.9 ? this.actions.Running : this.actions.Walking;
+      const running = move > 1.9;
+      const [, gait] = this._action(running ? "Running" : "Walking");
       // phase from distance travelled, so feet do not slide when the speed changes
-      const stride = gait === this.actions.Running ? 3.2 : 1.15;
+      const stride = running ? 3.2 : 1.15;
       gait.time = ((dist / stride) * gait.getClip().duration) % gait.getClip().duration;
-      gait.setEffectiveWeight(gait.getEffectiveWeight() + mv);
+      add(gait, mv);
     }
-    this.mixer.update(0);
-    return this.actions.Idle.getEffectiveWeight();
+    for (const src of this.sources) {
+      src.mixer.update(0);
+      src.w = Object.values(src.actions).reduce((acc, a) => acc + a.getEffectiveWeight(), 0);
+    }
+    this.group.updateMatrixWorld(true);
+    return this._action("Idle")[1].getEffectiveWeight();
   }
 
   /** Speech energy 0..1 at time t: the voice's loudness when supplied, else syllables in the talk windows. */
@@ -346,8 +478,7 @@ export class Stickman {
     const idleW = this._animate(actor.anim, t, ctx.speed ?? 0, ctx.dist ?? 0) * (1 - clamp((ctx.speed ?? 0) / 0.35));
     this.group.updateMatrixWorld(true);
     const seed = this.opts.seed;
-    const raw = this._p("Hips");
-    const animHips = new THREE.Vector3(raw.x, raw.y * this.hipScale, raw.z);
+    const animHips = this._hips();
     const spineDir = this._dir("Hips", "Neck");
     const up = this._dir("Neck", "Head");
     // legs as the animation has them: the ankles are where the feet are planted
@@ -478,10 +609,7 @@ export class Stickman {
       f.rotation.set(0, Math.atan2(fwd.x, fwd.z), 0);
     }
     // head: the rig's head rotation, then look-at, then life (nods with the speech, small glances, a tilt)
-    const hq = new THREE.Quaternion();
-    this._bone("Head").getWorldQuaternion(hq);
-    const local = this.group.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(hq);
-    this.head.quaternion.copy(local.multiply(this.headBindInv));
+    this.head.quaternion.copy(this._headQuat());
     this.head.position.copy(headC);
     const lk = this._look(actor.look, t, ctx, headC);
     if (lk) this.head.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(lk.pitch, lk.yaw, 0, "YXZ")));

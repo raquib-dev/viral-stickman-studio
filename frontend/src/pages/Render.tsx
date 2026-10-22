@@ -31,7 +31,12 @@ export default function Render() {
     <div className="grid gap-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="h1">7 · Render</h1>
-        <span className="flex gap-2"><RunStageButton stage="render" primary /><RunStageButton stage="stitch" /></span>
+        <span className="flex gap-2"><RunStageButton stage="render" primary />
+          <button className="btn" data-testid="rerender-all" title="Render every clip again with the current renderer and settings (finished clips are otherwise skipped)"
+            disabled={snap?.pipeline?.status === "running" || ["running", "queued"].includes(row?.status ?? "")}
+            onClick={async () => { setErr(null); if (!window.confirm(`Render all ${n} clips again? Finished clips are replaced.`)) return;
+              try { await api.post(`/projects/${slug}/stages/render/run`, { params: { force: true } }); } catch (e: any) { setErr(e.message); } }}>↻ Re-render all</button>
+          <RunStageButton stage="stitch" /></span>
       </div>
       <Section title="Cost">
         <div className="grid gap-3 md:grid-cols-4" data-testid="cost-meter">
@@ -158,7 +163,9 @@ function ScenePlans({ n }: { n: number }) {
     try { await api.post(`/projects/${slug}/stages/scene_plan/run`, { params: { only: [k], force: true, overwrite_edits: edited } }); } catch (e: any) { setErr(e.message); }
   };
   return (
-    <Section title="3D scene plans" right={<RunStageButton stage="scene_plan" label="Plan all scenes" />}>
+    <Section title="3D scene plans" right={<span className="flex gap-2"><RunStageButton stage="scene_plan" label="Plan all scenes" />
+      <button className="btn" disabled={busy} data-testid="replan-all" title="New AI plans for every clip (plans you edited in the scene editor are kept)"
+        onClick={async () => { setErr(null); try { await api.post(`/projects/${slug}/stages/scene_plan/run`, { params: { force: true } }); } catch (e: any) { setErr(e.message); } }}>↻ Re-plan all</button></span>}>
       <p className="mb-3 text-xs text-ink-3">Your writing model stages each clip as data for the 3D renderer (mood, gestures, props, panels, camera), using only names the renderer knows. Each plan is checked: unknown names fall back to safe ones, things are kept in frame, and numbers the voiceover doesn't say are removed. If a plan still fails, the keyword plan is used. Edit <code>scenes/clip-NN.json</code> by hand and it is kept (delete <code>_planned_by</code> from it to protect it).</p>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="scene-plans">
         {Array.from({ length: n }, (_, k) => {

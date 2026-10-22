@@ -79,7 +79,7 @@ def test_repair_clamps_the_look_and_keeps_props_out_of_the_lens():
     s, fixes, errs = tj.check_and_repair(raw, "Save your money.", 10.0)
     assert errs == []                                             # a dropped prop no longer leaves a dangling target
     assert s["exposure"] == 1.15 and s["handheld"] == 0.025 and "bloom" not in s
-    assert s["camera"][0]["shot"]["zoom"] == 0.75
+    assert s["camera"][0]["shot"]["zoom"] == 0.9                 # close-ups never closer than 0.9
     assert [p["id"] for p in s["props"]] == ["p2"] and s["props"][0]["pos"][2] == 0.6
     assert s["badges"] == [] and any("placeholder" in f for f in fixes)
     assert "target" not in s["actors"][0]["gestures"][0]

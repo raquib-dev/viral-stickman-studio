@@ -113,6 +113,7 @@ async function load(spec) {
   const elCtx = { pal: pal0, skin: spec.card ?? style.card, font: style.font };
   const elements = [...(spec.panels ?? []).map((p) => panel(p, elCtx)), ...(spec.badges ?? []).map((b) => badge(b, elCtx))];
   for (const el of elements) scene.add(el.group);
+  if (H > W) for (const el of elements) fitCard(el);
 
   const composer = new EffectComposer(renderer);
   composer.setPixelRatio(1);
@@ -201,8 +202,14 @@ function headOf(id, at) {
 function resolveKey(key, t) {
   if (!key.shot) return { pos: V(key.pos), look: V(key.look), fov: key.fov ?? 35 };
   const s = typeof key.shot === "string" ? { type: key.shot } : key.shot;
-  const [dist0, camY, lookY, fov] = SHOTS[s.type] ?? SHOTS.medium;
-  const dist = dist0 * (state.vertical ? 1 : 0.8) * num(s.zoom, 0.75, 1.6, 1);
+  let [dist0, camY, lookY, fov] = SHOTS[s.type] ?? SHOTS.medium;
+  if (s.type === "closeup") {
+    // a note or badge floats above the head: while one is up, a close-up eases out to a medium shot so it is
+    // readable (it was cropped to its last letters), then eases back in when it leaves
+    const w = cardsUp(t);
+    if (w > 0) [dist0, camY, lookY, fov] = SHOTS.closeup.map((v, k) => lerp(v, SHOTS.medium[k], w));
+  }
+  const dist = dist0 * (state.vertical ? 1 : 0.8) * num(s.zoom, s.type === "closeup" ? 0.9 : 0.75, 1.6, 1);
   const ids = [].concat(s.target ?? state.actors[0]?.id ?? []);
   let centre;
   if (s.type === "two_shot" || ids.length > 1) {
@@ -223,8 +230,32 @@ function resolveKey(key, t) {
   const base = head.clone().setY(0);
   const ang = (s.angle ?? 0) + (s.side ?? 0);
   const pos = base.clone().add(new THREE.Vector3(Math.sin(ang) * dist, camY, Math.cos(ang) * dist));
-  const lookAt = base.clone().add(new THREE.Vector3(0, s.type === "closeup" ? head.y - 0.22 : lookY, 0));
+  const closeLook = head.y - 0.22;
+  const lookAt = base.clone().add(new THREE.Vector3(0, s.type === "closeup" ? lerp(closeLook, lookY, cardsUp(t)) : lookY, 0));
   return { pos, look: lookAt, fov };
+}
+
+/** In a 9:16 frame a card must fit the narrow width: at most 1.15 m wide (scaled, text and all), kept inside the
+ *  frame sideways, and its top no higher than 2.2 m so a medium shot shows all of it. */
+function fitCard(el) {
+  const s = el.spec, k0 = s.scale ?? 1, maxW = el.kind === "panel" ? 1.15 : 1.0;
+  const k = Math.min(k0, maxW / Math.max(0.01, el.w));
+  const pos = [...(s.pos ?? [0, 1.5, 0])];
+  const half = (el.w * k) / 2;
+  pos[0] = half >= 0.62 ? 0 : clamp(pos[0], -0.62 + half, 0.62 - half);
+  pos[1] = Math.min(pos[1], 2.2 - (el.h * k) / 2);
+  el.spec = { ...s, scale: k, pos };
+}
+
+/** 0..1: how much a panel or badge is on screen at t (eased over 0.8 s each way), for close-up framing. */
+function cardsUp(t) {
+  let w = 0;
+  for (const el of state.elements) {
+    const s = el.spec, tin = s.t_in ?? 0, tout = s.t_out ?? Infinity;
+    const k = clamp((t - (tin - 0.4)) / 0.8) * (1 - clamp((t - tout) / 0.8));
+    w = Math.max(w, ease("inOutSine", k));
+  }
+  return w;
 }
 
 function placeCamera(t) {

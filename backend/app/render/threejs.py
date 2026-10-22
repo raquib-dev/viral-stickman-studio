@@ -597,9 +597,11 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
             k["shot"] = {**(shot if isinstance(shot, dict) else {}), "type": "medium"}
         if not shot and not (k.get("pos") and k.get("look")):
             k["shot"] = "medium"
-        if isinstance(k.get("shot"), dict) and isinstance(k["shot"].get("zoom"), (int, float)) and not 0.75 <= k["shot"]["zoom"] <= 1.6:
-            fixes.append(f"camera zoom {k['shot']['zoom']} -> {min(1.6, max(0.75, k['shot']['zoom']))}")
-            k["shot"]["zoom"] = min(1.6, max(0.75, k["shot"]["zoom"]))
+        z = k["shot"].get("zoom") if isinstance(k.get("shot"), dict) else None
+        lo = 0.9 if kind == "closeup" else 0.75                # a closer close-up is just a face filling the frame
+        if isinstance(z, (int, float)) and not lo <= z <= 1.6:
+            fixes.append(f"camera zoom {z} -> {min(1.6, max(lo, z))}")
+            k["shot"]["zoom"] = min(1.6, max(lo, z))
         k["t"] = T(k.get("t")); cams.append(k)
     if not cams:
         fixes.append("added a medium shot"); cams = [{"t": 0, "shot": {"type": "medium", "target": actors[0]["id"]}}]

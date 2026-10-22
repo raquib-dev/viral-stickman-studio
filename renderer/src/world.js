@@ -149,7 +149,7 @@ export function panel(spec, ctx) {
     }
   });
   const el = elementGroup(w, h, tex, skin, pal, 0.07);
-  return { ...el, spec };
+  return { ...el, spec, w, h, kind: "panel" };
 }
 
 export function badge(spec, ctx) {
@@ -178,7 +178,7 @@ export function badge(spec, ctx) {
     g.fillText(text, cw / 2, ch / 2 + 4);
   });
   const el = elementGroup(w, h, tex, skin, pal, h / 2);
-  return { ...el, spec };
+  return { ...el, spec, w, h, kind: "badge" };
 }
 
 /** Enter/exit motion shared by panels and badges, plus live frame colour from the palette. */

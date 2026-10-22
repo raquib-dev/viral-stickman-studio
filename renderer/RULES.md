@@ -69,8 +69,9 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
     A plan's `exposure`, `bloom` and `handheld` are clamped to safe ranges. Pure in the frame, so stills match.
 19. **One story, no dips to black.** Clips cut straight into each other: `transition` fades only into the
     first clip and out of the last (applied at plan time and again at render time; an editor-saved plan keeps
-    its own). A close-up is head and shoulders, never closer than 0.75 x its distance, and props stay behind
-    the actor's front line (z ≤ 0.6).
+    its own). A close-up is head and shoulders (zoom ≥ 0.9) and eases out to a medium shot while a note or
+    badge is up; in 9:16 cards are fitted to the frame (≤ 1.15 m wide, top ≤ 2.2 m); props stay behind the
+    actor's front line (z ≤ 0.6).
 20. **Every render reports on itself.** render.mjs emits a `qa` event per clip (frames rendered vs expected,
     near-black frames no fade explains, mostly-white frames, how often the exposure guard acted); stitch writes
     `final/qa.json` for the whole video (frame count, audio vs video length, black dips, caption overlaps).

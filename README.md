@@ -295,8 +295,10 @@ stitch). Differences from the narrated format:
   the same person twice gets a new angle; both characters at least every 5 lines; never the same framing twice
   in a row; the ending plays two-shot then wide. Faces come from the tags and the words.
 - **Render:** each line in its speaker's voice, laid out in the clip from the real voice lengths with the
-  script's timing (quick 0.06 s, normal 0.2 s, beat 0.75 s; spare time goes to the clip's start and end, never
-  into the conversation; sped up a little only if needed), lip sync per speaker (the mascot has a small mouth too), hard cuts. By default the
+  script's timing (quick 0.06 s, normal 0.2 s, beat 0.75 s; sped up a little only if needed). A clip ends
+  when its last line does (plus 0.3 s), up to 10 s, so there is no dead air between clips and the finished video
+  runs as long as the conversation (a "60 s" short can come out a little shorter). Lip
+  sync per speaker (the mascot has a small mouth too), hard cuts. By default the
   characters keep still and only their faces move: expressions, blinks and the talking mouth. Settings →
   Dialogue shorts → **Character motion → Lively** adds nods, hand beats, a hand to the cheek on questions and
   the mascot's hops.

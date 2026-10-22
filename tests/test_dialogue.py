@@ -125,6 +125,13 @@ def test_layout_follows_each_lines_timing():
     assert over["overflow"] > 0
     short = d.layout([0.8, 0.7], ["normal", "normal"])                  # spare time never becomes dead air mid-talk
     assert short["starts"][1] - short["ends"][0] <= 0.21
+    # a clip ends when its talk does (plus a short tail), so the next clip's first line is not after dead air
+    tight = d.layout([0.8, 0.7], ["normal", "normal"], pad=False)
+    assert tight["starts"][0] == d.LEAD
+    end = d.clip_end(tight, 10.0, 24)
+    assert abs(end - (tight["ends"][-1] + d.TAIL)) <= 1 / 24 and abs(end * 24 - round(end * 24)) < 1e-6
+    assert d.clip_end(long) <= 10.0 and d.clip_end({"starts": [], "ends": []}) == 10.0
+    assert d.clip_end(d.layout([0.3], ["normal"], pad=False)) == 2.0      # never a flash clip
 
 
 def test_scene_is_valid_with_a_cut_per_line_and_mouths_per_speaker():

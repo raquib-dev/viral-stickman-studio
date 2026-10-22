@@ -395,7 +395,8 @@ class ThreeJSBackend:
             parts.append(got)
             durs.append(probe(got)["duration"] if got else dlg.line_seconds(ln["text"], wpm))
         timing = dlg.layout(durs, [dlg.timing_of(ln) for ln in clip.lines], clip.duration,
-                            float(self.settings["voice"].get("max_speedup", 1.3)))
+                            float(self.settings["voice"].get("max_speedup", 1.3)), pad=False)
+        dur = dlg.clip_end(timing, clip.duration, fps)      # the clip ends when its talk does: no dead air before the next
         if timing["tempo"] > 1.001:
             log(f"clip {clip.index + 1}: lines sped up x{timing['tempo']} to fit 10 s", "warn")
         if timing["overflow"] > 0.05:
@@ -404,13 +405,13 @@ class ThreeJSBackend:
         mix = out.with_suffix(".vo.wav")
         voiced = any(parts)
         if voiced:
-            await asyncio.to_thread(tts.assemble, parts, timing["starts"], timing["tempo"], mix, clip.duration)
-            envelope = mouth_envelope(mix, fps, 0.0, 1.0, clip.duration)
+            await asyncio.to_thread(tts.assemble, parts, timing["starts"], timing["tempo"], mix, dur)
+            envelope = mouth_envelope(mix, fps, 0.0, 1.0, dur)
         else:
-            envelope = [0.0] * int(round(clip.duration * fps))
+            envelope = [0.0] * int(round(dur * fps))
         w, h = dims(clip.ratio, clip.resolution)
         scene = dlg.build_scene(clip.plan, timing, clip.cast, dlg.speaker_mouths(envelope, clip.plan, timing, fps), fps, w, h,
-                                clip.duration, seed=7 + clip.index * 31, quality=self.cfg.get("quality", "high"),
+                                dur, seed=7 + clip.index * 31, quality=self.cfg.get("quality", "high"),
                                 theme=clip.theme if clip.theme == "light" else "dark", dof=float(dcfg.get("dof", 0.035)),
                                 motion=str(dcfg.get("motion", "still")))
         if self.cfg.get("animation_pack", "auto") == "off":
@@ -426,13 +427,13 @@ class ThreeJSBackend:
             + (" · lip sync from the voices" if voiced else " · no voice engine: silent"))
         silent = out.with_suffix(".silent.mp4")
         qa = await self._render(scene_path, silent, clip, log)
-        fit = await tts.mux_exact(silent, mix if voiced else None, out, clip.duration)
+        fit = await tts.mux_exact(silent, mix if voiced else None, out, dur)
         for f in [silent, mix, *[x for x in parts if x]]:
             f.unlink(missing_ok=True)
         lf = await asyncio.to_thread(last_frame, out, out.with_suffix(".last.png"))
         timed = [{"i": ln["i"], "speaker": ln["speaker"], "text": dlg.clean(ln["text"]), "start": t0, "end": t1}
                  for ln, t0, t1 in zip(clip.lines, timing["starts"], timing["ends"])]
-        return ClipResult(clip.index, out, clip.duration, 0.0, self.name, last_frame=lf,
+        return ClipResult(clip.index, out, dur, 0.0, self.name, last_frame=lf,
                           meta={"scene": scene_path.name, "voice": voiced, "planned_by": "dialogue", "qa": qa, "lines": timed,
                                 "speech_window": [timed[0]["start"], timed[-1]["end"]] if timed else None,
                                 "tempo": timing["tempo"], **fit})

@@ -366,10 +366,11 @@ def plan_shots(lines: list[dict]) -> list[dict]:
 
 # ---- render-time timing ---------------------------------------------------------------------------
 
-def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_speedup: float = 1.25) -> dict:
+def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_speedup: float = 1.25, pad: bool = True) -> dict:
     """Where each voiced line plays inside the clip. The silence before a line follows its timing (quick 0.06 s,
     normal 0.2 s, a beat 0.75 s); when the clip is full the gaps shrink to their floors before speech speeds up
-    (up to max_speedup). Spare time goes to the start and the end of the clip, never into the conversation."""
+    (up to max_speedup). Spare time goes to the start and the end of the clip, never into the conversation;
+    pad=False keeps the lead short (the clip is then cut to clip_end(), so there is no spare time)."""
     n = len(durs)
     if not n:
         return {"starts": [], "ends": [], "tempo": 1.0, "overflow": 0.0}
@@ -388,7 +389,7 @@ def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_sp
     spoken = [d / tempo for d in durs]
     used = sum(spoken) + sum(gaps)
     overflow = max(0.0, used - room)
-    lead = LEAD + min(0.3, max(0.0, room - used) / 2)
+    lead = LEAD + (min(0.3, max(0.0, room - used) / 2) if pad else 0.0)
     starts, ends, t = [], [], lead
     for d, g in zip(spoken, gaps):
         t += g
@@ -396,6 +397,13 @@ def layout(durs: list[float], timings: list[str], clip_len: float = 10.0, max_sp
         t += d
         ends.append(round(min(clip_len, t), 3))
     return {"starts": starts, "ends": ends, "tempo": round(tempo, 3), "overflow": round(overflow, 3)}
+
+
+def clip_end(timing: dict, clip_len: float = 10.0, fps: int = 24) -> float:
+    """How long a dialogue clip runs: until its last line ends plus a short tail, at most clip_len (whole frames).
+    Clips are not padded to 10 s, so the next clip's first line follows like a normal reply, not after dead air."""
+    end = timing["ends"][-1] + TAIL if timing.get("ends") else clip_len
+    return round(min(clip_len, max(2.0, end)) * fps) / fps
 
 
 # ---- the renderer scene -----------------------------------------------------------------------------

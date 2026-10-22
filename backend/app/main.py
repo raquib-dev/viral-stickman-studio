@@ -136,6 +136,16 @@ def _gpu() -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}
 
 
+@app.get("/api/voice/elevenlabs/voices")
+async def elevenlabs_voices() -> dict:
+    """Voices in your ElevenLabs account (for the Settings picker). The key never leaves the server."""
+    from .render import tts
+    try:
+        return {"voices": await asyncio.to_thread(tts.elevenlabs_voices)}
+    except Exception as e:
+        raise HTTPException(502, f"ElevenLabs: {type(e).__name__}: {str(e)[:200]}")
+
+
 @app.get("/api/local/status")
 async def local_status() -> dict:
     """Which local AI pieces are reachable/installed, for Settings → Local services."""

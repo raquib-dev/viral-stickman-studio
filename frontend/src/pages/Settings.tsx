@@ -116,13 +116,14 @@ export default function Settings() {
       <Section title="Voice and captions (local)">
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm">Voiceover for local video<select className="input" value={s.voice.tts} onChange={(e) => set(["voice", "tts"], e.target.value)} data-testid="tts-engine">
-            <option value="auto">auto (Kokoro, then Piper)</option><option value="kokoro">Kokoro-82M</option><option value="piper">Piper</option><option value="none">none (silent clips)</option></select></label>
+            <option value="auto">auto (Kokoro, then Piper)</option><option value="kokoro">Kokoro-82M</option><option value="piper">Piper</option><option value="elevenlabs">ElevenLabs (cloud, paid per character)</option><option value="none">none (silent clips)</option></select></label>
           <label className="text-sm">Kokoro voice (male / female)<span className="flex gap-1"><input className="input" value={s.voice.kokoro_voice_male} onChange={(e) => set(["voice", "kokoro_voice_male"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_female} onChange={(e) => set(["voice", "kokoro_voice_female"], e.target.value)} /></span></label>
           <label className="text-sm">Piper voice model (.onnx path)<input className="input" value={s.voice.piper_model} onChange={(e) => set(["voice", "piper_model"], e.target.value)} /></label>
           <label className="text-sm">Caption timing model (faster-whisper)<select className="input" value={s.captions.whisper_model} onChange={(e) => set(["captions", "whisper_model"], e.target.value)}>
             {["base.en", "small.en", "medium.en", "large-v3-turbo"].map((m) => <option key={m}>{m}</option>)}</select></label>
           <label className="text-sm">Whisper device<select className="input" value={s.captions.whisper_device} onChange={(e) => set(["captions", "whisper_device"], e.target.value)}>
             <option value="auto">auto (GPU if available)</option><option value="cuda">GPU (cuda)</option><option value="cpu">CPU</option></select></label>
+          {s.voice.tts === "elevenlabs" && <ElevenLabsVoice s={s} set={set} />}
           <label className="text-sm">Max voice speed-up to fit a clip<input className="input" type="number" min={1} max={1.6} step={0.05} value={s.voice.max_speedup} onChange={(e) => set(["voice", "max_speedup"], Number(e.target.value))} /></label>
         </div>
       </Section>
@@ -141,6 +142,30 @@ export default function Settings() {
       {err && <ErrorBox>{err}</ErrorBox>}
     </div>
   );
+}
+
+function ElevenLabsVoice({ s, set }: { s: any; set: (path: string[], v: any) => void }) {
+  const [voices, setVoices] = useState<any[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = async () => { setErr(null); try { setVoices(((await api.get("/voice/elevenlabs/voices")) as any).voices); } catch (e: any) { setErr(e.message); } };
+  const field = (key: string) => voices ? (
+    <select className="input" value={s.voice[key]} onChange={(e) => set(["voice", key], e.target.value)}>
+      {!voices.some((v) => v.id === s.voice[key]) && <option value={s.voice[key]}>{s.voice[key]}</option>}
+      {voices.map((v) => <option key={v.id} value={v.id}>{v.name}{v.labels?.gender ? ` (${v.labels.gender}${v.labels.accent ? ", " + v.labels.accent : ""})` : ""}</option>)}
+    </select>) : <input className="input" value={s.voice[key]} onChange={(e) => set(["voice", key], e.target.value)} />;
+  const slider = (key: string, label: string) => (
+    <label className="text-sm">{label} {s.voice[key]}<input type="range" min={0} max={1} step={0.05} className="w-full" value={s.voice[key]} onChange={(e) => set(["voice", key], Number(e.target.value))} /></label>);
+  return (
+    <div className="grid gap-3 rounded-lg border border-line p-3 md:col-span-3 md:grid-cols-3" data-testid="elevenlabs-settings">
+      <label className="text-sm">ElevenLabs voice (male / female)<span className="flex gap-1">{field("elevenlabs_voice_male")}{field("elevenlabs_voice_female")}</span></label>
+      <label className="text-sm">Model<select className="input" value={s.voice.elevenlabs_model} onChange={(e) => set(["voice", "elevenlabs_model"], e.target.value)}>
+        {[["eleven_multilingual_v2", "Multilingual v2 (best quality)"], ["eleven_turbo_v2_5", "Turbo v2.5 (faster, cheaper)"], ["eleven_flash_v2_5", "Flash v2.5 (fastest, cheapest)"], ["eleven_v3", "v3 (most expressive)"]]
+          .map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+      <div className="flex items-end"><button className="btn" type="button" onClick={load} data-testid="elevenlabs-load">Load my voices</button></div>
+      {slider("elevenlabs_stability", "Stability")}{slider("elevenlabs_similarity", "Similarity")}{slider("elevenlabs_style", "Style exaggeration")}
+      <p className="text-xs text-ink-3 md:col-span-3">Needs <code>ELEVENLABS_API_KEY</code> in <code>.env</code> (restart the app after adding it). Billed per character by ElevenLabs; each clip's character count is in the job log. If a call fails (key, credits, outage) that clip uses Kokoro/Piper instead.</p>
+      {err && <p className="text-xs text-red-500 md:col-span-3">{err}</p>}
+    </div>);
 }
 
 function LocalServices() {
@@ -174,8 +199,8 @@ function LocalServices() {
           <Row ok={st.threejs?.pack} name="Animation pack" fix={<>Optional: download the free CC0 <a className="underline" href="https://quaternius.itch.io/universal-animation-library" target="_blank" rel="noreferrer">Universal Animation Library</a> (Quaternius), save its glTF/GLB as <code>renderer/public/models/anim-pack.glb</code>, then <code>npm run build</code> in renderer/. README → Animation pack.</>}>
             {st.threejs?.pack ? "installed: walking, running, idle and more come from the pack" : "not installed: the base CC0 rig's moves are used"}</Row>
           <Row ok={st.stickman?.ok} name="Stickman animator" fix={st.stickman?.error}>{st.stickman?.ok ? "ready (Pillow + ffmpeg)" : ""}</Row>
-          <Row ok={st.tts?.kokoro || st.tts?.piper} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx</>}>
-            {[st.tts?.kokoro && "Kokoro", st.tts?.piper && "Piper"].filter(Boolean).join(", ") || "no engine installed: local clips will be silent"}</Row>
+          <Row ok={st.tts?.kokoro || st.tts?.piper || st.tts?.elevenlabs} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx, or <code>ELEVENLABS_API_KEY</code> in .env</>}>
+            {[st.tts?.kokoro && "Kokoro", st.tts?.piper && "Piper", st.tts?.elevenlabs && "ElevenLabs (key set)"].filter(Boolean).join(", ") || "no engine installed: local clips will be silent"}</Row>
           <Row ok={st.whisper?.installed} name="Caption timing" fix={<><code>pip install faster-whisper</code> (word-accurate captions)</>}>
             {st.whisper?.installed ? `faster-whisper on ${st.whisper.device}` : "estimated timing"}</Row>
         </ul>

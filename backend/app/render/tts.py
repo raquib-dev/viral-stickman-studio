@@ -3,8 +3,10 @@ animator has no voice). Engines, best first for "auto":
 
 - Kokoro-82M (`pip install kokoro soundfile`, Apache-2.0 weights): small, natural English, GPU or CPU.
 - Piper (`pip install piper-tts` + a .onnx voice, MIT): CPU-only, very fast.
+- ElevenLabs (cloud, ELEVENLABS_API_KEY in .env, billed per character by ElevenLabs): chosen explicitly, never
+  by "auto"; if it fails (no key, no credits, outage) the clip falls back to Kokoro/Piper instead of going silent.
 
-Both write a WAV. `fit_to_clip` then muxes it under a clip, speeding speech up a little if it overruns.
+All write a WAV. `fit_to_clip` then muxes it under a clip, speeding speech up a little if it overruns.
 """
 from __future__ import annotations
 
@@ -24,8 +26,12 @@ class TTSUnavailable(RuntimeError):
     pass
 
 
+ELEVEN_URL = "https://api.elevenlabs.io/v1"
+
+
 def available() -> dict:
-    out = {"kokoro": False, "piper": False}
+    from ..settings import has_secret
+    out = {"kokoro": False, "piper": False, "elevenlabs": has_secret("ELEVENLABS_API_KEY")}
     try:
         import kokoro  # noqa: F401
         out["kokoro"] = True
@@ -78,6 +84,61 @@ def piper_say(text: str, out: Path, model: str) -> Path:
     return out
 
 
+def elevenlabs_say(text: str, out: Path, v: dict, voice_pref: str = "male", log=None, transport=None) -> Path:
+    """ElevenLabs text-to-speech -> MP3 -> WAV at `out`. Retries busy/5xx twice; clear errors otherwise."""
+    import time
+
+    import httpx
+
+    from ..settings import secret
+    from .media import run_ffmpeg
+    key = secret("ELEVENLABS_API_KEY")
+    if not key:
+        raise TTSUnavailable("ELEVENLABS_API_KEY is not set in .env")
+    voice = v.get("elevenlabs_voice_female" if voice_pref == "female" else "elevenlabs_voice_male") or "pNInz6obpgDQGcFmaJgB"
+    body = {"text": text, "model_id": v.get("elevenlabs_model", "eleven_multilingual_v2"),
+            "voice_settings": {"stability": float(v.get("elevenlabs_stability", 0.5)),
+                               "similarity_boost": float(v.get("elevenlabs_similarity", 0.75)),
+                               "style": float(v.get("elevenlabs_style", 0.0)), "use_speaker_boost": True}}
+    mp3 = out.with_suffix(".eleven.mp3")
+    with httpx.Client(timeout=120, transport=transport) as http:
+        for attempt in range(3):
+            r = http.post(f"{ELEVEN_URL}/text-to-speech/{voice}", params={"output_format": "mp3_44100_128"},
+                          headers={"xi-api-key": key, "accept": "audio/mpeg"}, json=body)
+            if r.status_code == 200:
+                break
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                if log:
+                    log(f"ElevenLabs busy (HTTP {r.status_code}); retrying", "warn")
+                time.sleep(2 * (attempt + 1))
+                continue
+            detail = r.text[:200]
+            hint = {401: "the API key is wrong", 402: "out of credits or the plan does not include this", 404: f"voice {voice!r} not found in your account",
+                    422: "the request was rejected (model or settings)"}.get(r.status_code, "")
+            raise TTSUnavailable(f"ElevenLabs HTTP {r.status_code}{': ' + hint if hint else ''} {detail}")
+    mp3.write_bytes(r.content)
+    run_ffmpeg(["-i", str(mp3), "-ac", "1", "-ar", "44100", str(out)])
+    mp3.unlink(missing_ok=True)
+    if log:
+        log(f"ElevenLabs voice {voice}: {len(text)} characters (billed to your ElevenLabs account)")
+    return out
+
+
+def elevenlabs_voices(transport=None) -> list[dict]:
+    """The voices in the user's ElevenLabs account, for the Settings picker."""
+    import httpx
+
+    from ..settings import secret
+    key = secret("ELEVENLABS_API_KEY")
+    if not key:
+        return []
+    with httpx.Client(timeout=20, transport=transport) as http:
+        r = http.get(f"{ELEVEN_URL}/voices", headers={"xi-api-key": key})
+        r.raise_for_status()
+        return [{"id": x.get("voice_id"), "name": x.get("name"), "labels": x.get("labels") or {}, "category": x.get("category")}
+                for x in r.json().get("voices", [])]
+
+
 def synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=None) -> Path | None:
     """Speak `text` into `out` (WAV). Returns None when TTS is off or no engine is installed."""
     v = settings.get("voice", {})
@@ -85,19 +146,24 @@ def synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=No
     if engine == "none" or not text.strip():
         return None
     have = available()
-    order = ["kokoro", "piper"] if engine == "auto" else [engine]
+    # ElevenLabs falls back to the local engines so a missing key or empty credits never means a silent clip
+    order = ["kokoro", "piper"] if engine == "auto" else ["elevenlabs", "kokoro", "piper"] if engine == "elevenlabs" else [engine]
     errors = []
     for name in order:
         if not have.get(name):
             errors.append(f"{name} not installed")
             continue
         try:
+            if name == "elevenlabs":
+                return elevenlabs_say(text, out, v, voice_pref, log)
             if name == "kokoro":
                 voice = v.get("kokoro_voice_female" if voice_pref == "female" else "kokoro_voice_male", "am_michael")
                 return kokoro_say(text, out, voice)
             return piper_say(text, out, v.get("piper_model", ""))
         except Exception as e:
-            errors.append(f"{name}: {type(e).__name__}: {str(e)[:160]}")
+            errors.append(f"{name}: {type(e).__name__}: {str(e)[:200]}")
+            if name == "elevenlabs" and log:
+                log(f"ElevenLabs failed ({str(e)[:200]}); trying the local voice instead", "warn")
     if log:
         log("no voiceover: " + "; ".join(errors) + " (pip install kokoro soundfile — see README → Local mode)", "warn")
     return None

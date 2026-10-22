@@ -17,7 +17,7 @@ from dotenv import dotenv_values
 
 from .paths import CONFIG, REPO_ROOT
 
-SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FAL_KEY", "YOUTUBE_API_KEY")
+SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FAL_KEY", "YOUTUBE_API_KEY", "ELEVENLABS_API_KEY")
 SETTINGS_FILE = Path(os.environ.get("VSS_SETTINGS_FILE") or CONFIG / "settings.json")
 PRICING_FILE = CONFIG / "pricing.json"
 
@@ -113,14 +113,18 @@ DEFAULTS: dict[str, Any] = {
                     "style": "auto", "mood": "auto", "animation_pack": "auto"},
     },
     "voice": {"tts": "auto", "kokoro_voice_male": "am_michael", "kokoro_voice_female": "af_heart",
-              "piper_model": "", "max_speedup": 1.3},
+              "piper_model": "", "max_speedup": 1.3,
+              # ElevenLabs (cloud): voice IDs from your account (defaults: premade "Adam" and "Rachel")
+              "elevenlabs_voice_male": "pNInz6obpgDQGcFmaJgB", "elevenlabs_voice_female": "21m00Tcm4TlvDq8ikWAM",
+              "elevenlabs_model": "eleven_multilingual_v2", "elevenlabs_stability": 0.5, "elevenlabs_similarity": 0.75,
+              "elevenlabs_style": 0.0},
     "captions": {"whisper_model": "base.en", "whisper_device": "auto"},
 }
 
 AGENT_PROVIDERS = ("claude", "local", "hybrid")
 RENDER_BACKENDS = ("mock", "omni-gemini", "omni-fal", "local-threejs", "local-stickman", "local-comfyui")
 LOCAL_BACKENDS = ("local-threejs", "local-stickman", "local-comfyui")
-TTS_ENGINES = ("auto", "kokoro", "piper", "none")
+TTS_ENGINES = ("auto", "kokoro", "piper", "elevenlabs", "none")
 
 
 def load_settings() -> dict[str, Any]:

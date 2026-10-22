@@ -431,8 +431,12 @@ async def stitch_stage(ctx) -> dict:
     words, method = None, "estimate"
     if backend_used != "mock":
         cs = ctx.settings["captions"]
-        words = await th(cap.whisper_words, stitched, ctx.log, cs.get("whisper_model", "base.en"), cs.get("whisper_device", "auto"))
-        method = "faster-whisper" if words else "estimate (faster-whisper not installed or failed)"
+        if cs.get("engine") == "groq":
+            words = await th(cap.groq_words, stitched, ctx.log, cs.get("groq_model", "whisper-large-v3-turbo"))
+            method = "Groq Whisper" if words else method
+        if not words:
+            words = await th(cap.whisper_words, stitched, ctx.log, cs.get("whisper_model", "base.en"), cs.get("whisper_device", "auto"))
+            method = "faster-whisper" if words else "estimate (no word timing available)"
     if not words:
         # the local backends record where the voice really is in each clip; use it so captions follow the audio
         windows = [ctx.read_json(f"clips/clip-{k:02d}.json", default={}).get("meta", {}).get("speech_window") for k in range(1, n + 1)]

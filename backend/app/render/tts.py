@@ -3,8 +3,9 @@ animator has no voice). Engines, best first for "auto":
 
 - Kokoro-82M (`pip install kokoro soundfile`, Apache-2.0 weights): small, natural English, GPU or CPU.
 - Piper (`pip install piper-tts` + a .onnx voice, MIT): CPU-only, very fast.
-- ElevenLabs (cloud, ELEVENLABS_API_KEY in .env, billed per character by ElevenLabs): chosen explicitly, never
-  by "auto"; if it fails (no key, no credits, outage) the clip falls back to Kokoro/Piper instead of going silent.
+- ElevenLabs (cloud, ELEVENLABS_API_KEY in .env, billed per character by ElevenLabs) and Groq (cloud,
+  GROQ_API_KEY, its OpenAI-compatible /audio/speech): chosen explicitly, never by "auto"; if one fails (no key,
+  no credits, rate limit, outage) the clip falls back to Kokoro/Piper instead of going silent.
 
 All write a WAV. `fit_to_clip` then muxes it under a clip, speeding speech up a little if it overruns.
 """
@@ -32,7 +33,7 @@ ELEVEN_URL = "https://api.elevenlabs.io/v1"
 
 def available() -> dict:
     from ..settings import has_secret
-    out = {"kokoro": False, "piper": False, "elevenlabs": has_secret("ELEVENLABS_API_KEY")}
+    out = {"kokoro": False, "piper": False, "elevenlabs": has_secret("ELEVENLABS_API_KEY"), "groq": has_secret("GROQ_API_KEY")}
     try:
         import kokoro  # noqa: F401
         out["kokoro"] = True
@@ -125,6 +126,75 @@ def elevenlabs_say(text: str, out: Path, v: dict, voice_pref: str = "male", log=
     return out
 
 
+def _chunks(text: str, limit: int) -> list[str]:
+    """Split at sentence ends (then commas, then spaces) into pieces of at most `limit` characters."""
+    import re
+    out, cur = [], ""
+    for part in re.split(r"(?<=[.!?])\s+|(?<=,)\s+", text.strip()):
+        while len(part) > limit:
+            cut = part.rfind(" ", 0, limit)
+            cut = cut if cut > 0 else limit
+            out.append(part[:cut].strip()); part = part[cut:].strip()
+        if cur and len(cur) + 1 + len(part) > limit:
+            out.append(cur); cur = part
+        else:
+            cur = f"{cur} {part}".strip()
+    if cur:
+        out.append(cur)
+    return [c for c in out if c]
+
+
+def groq_say(text: str, out: Path, v: dict, voice_pref: str = "male", log=None, transport=None, base_url: str | None = None) -> Path:
+    """Groq text-to-speech (OpenAI-compatible POST /audio/speech) -> WAV at `out`. Long lines are spoken in
+    sentence-sized pieces and joined; 429/5xx are retried after the wait Groq asks for."""
+    import time
+
+    import httpx
+
+    from ..settings import load_settings, secret
+    from .media import run_ffmpeg
+    key = secret("GROQ_API_KEY")
+    if not key:
+        raise TTSUnavailable("GROQ_API_KEY is not set in .env")
+    base = (base_url or load_settings()["agent"]["groq"]["base_url"]).rstrip("/")
+    model = v.get("groq_tts_model") or "canopylabs/orpheus-v1-english"
+    voice = v.get("groq_voice_female" if voice_pref == "female" else "groq_voice_male") or "troy"
+    parts = []
+    with httpx.Client(timeout=120, transport=transport) as http:
+        for k, piece in enumerate(_chunks(text, int(v.get("groq_tts_chunk_chars", 190)))):
+            for attempt in range(4):
+                r = http.post(f"{base}/audio/speech", headers={"Authorization": f"Bearer {key}"},
+                              json={"model": model, "voice": voice, "input": piece, "response_format": "wav"})
+                if r.status_code == 200:
+                    break
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
+                    wait = min(30.0, float(r.headers.get("retry-after") or 2 * (attempt + 1)))
+                    if log:
+                        log(f"Groq voice busy (HTTP {r.status_code}); retrying in {wait:.0f}s", "warn")
+                    time.sleep(wait)
+                    continue
+                hint = {401: "the API key was refused", 403: "this key cannot use the model (accept its terms in the Groq console?)",
+                        404: f"no model {model!r} or voice {voice!r}", 400: "the request was rejected (model, voice or text)"}.get(r.status_code, "")
+                raise TTSUnavailable(f"Groq speech HTTP {r.status_code}{': ' + hint if hint else ''} {r.text[:200]}")
+            f = out.with_suffix(f".groq{k}.wav")
+            f.write_bytes(r.content)
+            parts.append(f)
+    if not parts:
+        raise TTSUnavailable("Groq returned no audio")
+    if len(parts) == 1:
+        run_ffmpeg(["-i", str(parts[0]), "-ac", "1", "-c:a", "pcm_s16le", str(out)])
+    else:
+        listing = out.with_suffix(".groq.txt")
+        listing.write_text("".join(f"file '{p.resolve().as_posix()}'\n" for p in parts), encoding="utf-8")
+        run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), "-ac", "1", "-c:a", "pcm_s16le", str(out)])
+        listing.unlink(missing_ok=True)
+    for p in parts:
+        p.unlink(missing_ok=True)
+    if log:
+        log(f"Groq voice {voice} ({model}): {len(text)} characters in {len(parts)} piece(s) (billed by Groq)")
+    return out
+
+
 def elevenlabs_voices(transport=None) -> list[dict]:
     """The voices in the user's ElevenLabs account, for the Settings picker."""
     import httpx
@@ -169,7 +239,8 @@ def _synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=N
         return None
     have = available()
     # ElevenLabs falls back to the local engines so a missing key or empty credits never means a silent clip
-    order = ["kokoro", "piper"] if engine == "auto" else ["elevenlabs", "kokoro", "piper"] if engine == "elevenlabs" else [engine]
+    cloud = engine in ("elevenlabs", "groq")
+    order = ["kokoro", "piper"] if engine == "auto" else [engine, "kokoro", "piper"] if cloud else [engine]
     errors = []
     for name in order:
         if not have.get(name):
@@ -178,14 +249,16 @@ def _synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=N
         try:
             if name == "elevenlabs":
                 return elevenlabs_say(text, out, v, voice_pref, log)
+            if name == "groq":
+                return groq_say(text, out, v, voice_pref, log)
             if name == "kokoro":
                 voice = v.get("kokoro_voice_female" if voice_pref == "female" else "kokoro_voice_male", "am_michael")
                 return kokoro_say(text, out, voice)
             return piper_say(text, out, v.get("piper_model", ""))
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}: {str(e)[:200]}")
-            if name == "elevenlabs" and log:
-                log(f"ElevenLabs failed ({str(e)[:200]}); trying the local voice instead", "warn")
+            if name in ("elevenlabs", "groq") and log:
+                log(f"{'ElevenLabs' if name == 'elevenlabs' else 'Groq voice'} failed ({str(e)[:200]}); trying the local voice instead", "warn")
     if log:
         log("no voiceover: " + "; ".join(errors) + " (pip install kokoro soundfile — see README → Local mode)", "warn")
     return None

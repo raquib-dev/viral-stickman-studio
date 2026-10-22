@@ -86,6 +86,44 @@ def dedupe_words(words: list[Word]) -> list[Word]:
     return out
 
 
+def groq_words(audio_or_video: Path, log=None, model: str = "whisper-large-v3-turbo", transport=None,
+               base_url: str | None = None) -> list[Word] | None:
+    """Word timings from Groq's hosted Whisper (OpenAI-compatible /audio/transcriptions, verbose_json with word
+    timestamps). The audio is sent as a small 16 kHz mono MP3. None on any failure (captions then fall back)."""
+    import httpx
+
+    from ..settings import load_settings, secret
+    from .media import run_ffmpeg
+    key = secret("GROQ_API_KEY")
+    if not key:
+        if log:
+            log("Groq captions: GROQ_API_KEY is not set in .env; using the fallback timing", "warn")
+        return None
+    base = (base_url or load_settings()["agent"]["groq"]["base_url"]).rstrip("/")
+    mp3 = Path(audio_or_video).with_suffix(".groq-asr.mp3")
+    try:
+        run_ffmpeg(["-i", str(audio_or_video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(mp3)])
+        with httpx.Client(timeout=300, transport=transport) as http:
+            r = http.post(f"{base}/audio/transcriptions", headers={"Authorization": f"Bearer {key}"},
+                          data={"model": model, "response_format": "verbose_json", "timestamp_granularities[]": "word",
+                                "language": "en", "temperature": "0"},
+                          files={"file": (mp3.name, mp3.read_bytes(), "audio/mpeg")})
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
+        d = r.json()
+        raw = d.get("words") or [w for s in d.get("segments", []) for w in s.get("words", [])]
+        out = [Word(str(w["word"]).strip(), float(w["start"]), float(w["end"])) for w in raw if str(w.get("word", "")).strip()]
+        if log:
+            log(f"Groq Whisper ({model}): {len(out)} words timed")
+        return out or None
+    except Exception as e:
+        if log:
+            log(f"Groq captions failed ({type(e).__name__}: {str(e)[:200]}); using the fallback timing", "warn")
+        return None
+    finally:
+        mp3.unlink(missing_ok=True)
+
+
 def _ass_time(t: float) -> str:
     cs = int(round(max(0.0, t) * 100))
     h, cs = divmod(cs, 360000)

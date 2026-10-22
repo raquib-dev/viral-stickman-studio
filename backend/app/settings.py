@@ -120,14 +120,18 @@ DEFAULTS: dict[str, Any] = {
               # ElevenLabs (cloud): voice IDs from your account (defaults: premade "Adam" and "Rachel")
               "elevenlabs_voice_male": "pNInz6obpgDQGcFmaJgB", "elevenlabs_voice_female": "21m00Tcm4TlvDq8ikWAM",
               "elevenlabs_model": "eleven_multilingual_v2", "elevenlabs_stability": 0.5, "elevenlabs_similarity": 0.75,
-              "elevenlabs_style": 0.0},
-    "captions": {"whisper_model": "base.en", "whisper_device": "auto"},
+              "elevenlabs_style": 0.0,
+              # Groq text-to-speech (GROQ_API_KEY): model and voice names from the Groq console's speech docs
+              "groq_tts_model": "canopylabs/orpheus-v1-english", "groq_voice_male": "troy", "groq_voice_female": "hannah",
+              "groq_tts_chunk_chars": 190},
+    # captions: word timing from faster-whisper on this machine ("local") or Groq's hosted Whisper ("groq")
+    "captions": {"whisper_model": "base.en", "whisper_device": "auto", "engine": "local", "groq_model": "whisper-large-v3-turbo"},
 }
 
 AGENT_PROVIDERS = ("claude", "local", "hybrid", "groq", "hybrid-groq")
 RENDER_BACKENDS = ("mock", "omni-gemini", "omni-fal", "local-threejs", "local-stickman", "local-comfyui")
 LOCAL_BACKENDS = ("local-threejs", "local-stickman", "local-comfyui")
-TTS_ENGINES = ("auto", "kokoro", "piper", "elevenlabs", "none")
+TTS_ENGINES = ("auto", "kokoro", "piper", "elevenlabs", "groq", "none")
 
 
 def load_settings() -> dict[str, Any]:
@@ -156,6 +160,8 @@ def validate_settings(s: dict[str, Any]) -> None:
         raise ValueError("Groq URL must start with https://")
     if s["voice"]["tts"] not in TTS_ENGINES:
         raise ValueError("unknown TTS engine")
+    if s["captions"].get("engine", "local") not in ("local", "groq"):
+        raise ValueError("caption engine must be local or groq")
     if not 1 <= int(s["agent"]["max_attempts"]) <= 6:
         raise ValueError("agent attempts must be 1-6")
     if s["render"]["resolution"] not in ("360p", "720p", "1080p", "4k"):

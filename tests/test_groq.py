@@ -94,3 +94,80 @@ async def test_groq_models_check(key):
         return httpx.Response(200, json={"data": [{"id": "openai/gpt-oss-120b", "active": True}, {"id": "llama-3.3-70b-versatile"}]})
     r = await la.groq_models(S.load_settings()["agent"]["groq"], transport=httpx.MockTransport(handler))
     assert r["ok"] and r["model_present"] and len(r["models"]) == 2
+
+
+# ---- Groq voice (text-to-speech) and Groq Whisper (caption timing) ----
+
+def _wav_bytes(seconds=0.6):
+    import subprocess
+    r = subprocess.run([S.ffmpeg_bin(), "-loglevel", "error", "-f", "lavfi", "-i", f"sine=frequency=200:duration={seconds}",
+                        "-ar", "24000", "-ac", "1", "-f", "wav", "-"], capture_output=True, check=True)
+    return r.stdout
+
+
+def test_groq_voice_speaks_in_pieces_and_joins_them(key, tmp_path, monkeypatch):
+    import wave
+
+    from backend.app.render import tts
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content))
+        if len(seen) == 1:
+            return httpx.Response(429, headers={"retry-after": "1"})
+        return httpx.Response(200, content=_wav_bytes())
+    v = {**S.DEFAULTS["voice"], "tts": "groq", "groq_tts_chunk_chars": 40}
+    text = "You don't have a money problem. You have a game on repeat. Friday night, level one."
+    logs = []
+    out = tts.groq_say(text, tmp_path / "vo.wav", v, "female", lambda m, lvl="info": logs.append(m),
+                       transport=httpx.MockTransport(handler), base_url="https://api.groq.com/openai/v1")
+    bodies = seen[1:]
+    assert len(bodies) >= 3 and all(len(b["input"]) <= 40 for b in bodies)
+    assert " ".join(b["input"] for b in bodies) == text                        # nothing lost or reordered
+    assert bodies[0]["voice"] == "hannah" and bodies[0]["model"] == "canopylabs/orpheus-v1-english"
+    with wave.open(str(out)) as w:
+        assert w.getnframes() / w.getframerate() > 0.6 * len(bodies) - 0.1      # pieces joined
+    assert not list(tmp_path.glob("*.groq*")) and KEY not in " ".join(logs)
+
+
+def test_synth_with_groq_falls_back_to_local(key, tmp_path, monkeypatch):
+    from backend.app.render import tts
+
+    def boom(*a, **k):
+        raise tts.TTSUnavailable("Groq speech HTTP 403: terms not accepted")
+    monkeypatch.setattr(tts, "groq_say", boom)
+    monkeypatch.setattr(tts, "available", lambda: {"groq": True, "kokoro": True, "piper": False})
+    monkeypatch.setattr(tts, "kokoro_say", lambda text, out, voice: out)
+    logs = []
+    s = {"voice": {**S.DEFAULTS["voice"], "tts": "groq"}}
+    assert tts._synth("Hi.", tmp_path / "x.wav", s, "male", lambda m, lvl="info": logs.append((lvl, m))) == tmp_path / "x.wav"
+    assert any("Groq voice failed" in m for _, m in logs)
+
+
+def test_groq_whisper_word_timings(key, tmp_path):
+    from backend.app.render import captions as cap
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(_wav_bytes(1.0))
+    seen = {}
+
+    def handler(req):
+        seen["path"], seen["auth"], seen["body"] = req.url.path, req.headers["authorization"], req.content
+        return httpx.Response(200, json={"text": "you have", "words": [{"word": " You", "start": 0.1, "end": 0.3},
+                                                                       {"word": "have", "start": 0.3, "end": 0.6}]})
+    words = cap.groq_words(audio, None, transport=httpx.MockTransport(handler), base_url="https://api.groq.com/openai/v1")
+    assert [(w.w, w.s, w.e) for w in words] == [("You", 0.1, 0.3), ("have", 0.3, 0.6)]
+    assert seen["path"] == "/openai/v1/audio/transcriptions" and seen["auth"] == f"Bearer {KEY}"
+    assert b"whisper-large-v3-turbo" in seen["body"] and b"timestamp_granularities[]" in seen["body"]
+    bad = cap.groq_words(audio, None, transport=httpx.MockTransport(lambda r: httpx.Response(500)), base_url="https://x/v1")
+    assert bad is None and not list(tmp_path.glob("*.mp3"))
+
+
+def test_settings_accept_groq_everywhere(key):
+    s = _settings("groq")
+    s["voice"] = {**s["voice"], "tts": "groq"}
+    s["captions"] = {**s["captions"], "engine": "groq"}
+    S.validate_settings(s)
+    s["captions"]["engine"] = "cloud"
+    with pytest.raises(ValueError):
+        S.validate_settings(s)

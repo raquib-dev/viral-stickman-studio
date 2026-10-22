@@ -96,6 +96,8 @@ export default function Settings() {
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm">Provider<select className="input" value={s.agent.provider} onChange={(e) => set(["agent", "provider"], e.target.value)} data-testid="agent-provider">
             <option value="claude">Claude API (best quality)</option><option value="hybrid">Hybrid: Claude directs, local writes the rest</option><option value="local">Local LLM only ($0)</option><option value="hybrid-groq">Hybrid: Claude directs, Groq writes the rest</option><option value="groq">Groq only (hosted, fast)</option></select></label>
+          <div className="flex items-end"><button className="btn" type="button" data-testid="use-groq-everywhere" title="Writing, voiceover and caption timing all on Groq (GROQ_API_KEY). Save to keep it."
+            onClick={() => { set(["agent", "provider"], "groq"); set(["voice", "tts"], "groq"); set(["captions", "engine"], "groq"); }}>Use Groq for everything</button></div>
           <label className="text-sm">Attempts per task (invalid answers are retried)<input className="input" type="number" min={1} max={6} value={s.agent.max_attempts} onChange={(e) => set(["agent", "max_attempts"], Number(e.target.value))} /></label>
         </div>
         {s.agent.provider.endsWith("groq") && <GroqSettings s={s} set={set} />}
@@ -117,14 +119,27 @@ export default function Settings() {
       <Section title="Voice and captions (local)">
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm">Voiceover for local video<select className="input" value={s.voice.tts} onChange={(e) => set(["voice", "tts"], e.target.value)} data-testid="tts-engine">
-            <option value="auto">auto (Kokoro, then Piper)</option><option value="kokoro">Kokoro-82M</option><option value="piper">Piper</option><option value="elevenlabs">ElevenLabs (cloud, paid per character)</option><option value="none">none (silent clips)</option></select></label>
+            <option value="auto">auto (Kokoro, then Piper)</option><option value="kokoro">Kokoro-82M</option><option value="piper">Piper</option><option value="elevenlabs">ElevenLabs (cloud, paid per character)</option><option value="groq">Groq (cloud, GROQ_API_KEY)</option><option value="none">none (silent clips)</option></select></label>
           <label className="text-sm">Kokoro voice (male / female)<span className="flex gap-1"><input className="input" value={s.voice.kokoro_voice_male} onChange={(e) => set(["voice", "kokoro_voice_male"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_female} onChange={(e) => set(["voice", "kokoro_voice_female"], e.target.value)} /></span></label>
           <label className="text-sm">Piper voice model (.onnx path)<input className="input" value={s.voice.piper_model} onChange={(e) => set(["voice", "piper_model"], e.target.value)} /></label>
+          <label className="text-sm">Caption timing<select className="input" value={s.captions.engine ?? "local"} onChange={(e) => set(["captions", "engine"], e.target.value)} data-testid="caption-engine">
+            <option value="local">faster-whisper on this machine</option><option value="groq">Groq Whisper (cloud, GROQ_API_KEY)</option></select></label>
+          {s.captions.engine === "groq" && <label className="text-sm">Groq Whisper model<input className="input" list="groq-asr" value={s.captions.groq_model} onChange={(e) => set(["captions", "groq_model"], e.target.value)} />
+            <datalist id="groq-asr"><option value="whisper-large-v3-turbo" /><option value="whisper-large-v3" /></datalist></label>}
           <label className="text-sm">Caption timing model (faster-whisper)<select className="input" value={s.captions.whisper_model} onChange={(e) => set(["captions", "whisper_model"], e.target.value)}>
             {["base.en", "small.en", "medium.en", "large-v3-turbo"].map((m) => <option key={m}>{m}</option>)}</select></label>
           <label className="text-sm">Whisper device<select className="input" value={s.captions.whisper_device} onChange={(e) => set(["captions", "whisper_device"], e.target.value)}>
             <option value="auto">auto (GPU if available)</option><option value="cuda">GPU (cuda)</option><option value="cpu">CPU</option></select></label>
           {s.voice.tts === "elevenlabs" && <ElevenLabsVoice s={s} set={set} />}
+          {s.voice.tts === "groq" && (
+            <div className="grid gap-3 rounded-lg border border-line p-3 md:col-span-3 md:grid-cols-3" data-testid="groq-voice-settings">
+              <label className="text-sm">Groq speech model<input className="input" list="groq-tts" value={s.voice.groq_tts_model} onChange={(e) => set(["voice", "groq_tts_model"], e.target.value)} />
+                <datalist id="groq-tts"><option value="canopylabs/orpheus-v1-english" /><option value="playai-tts" /></datalist></label>
+              <label className="text-sm">Voice (male / female)<span className="flex gap-1">
+                <input className="input" value={s.voice.groq_voice_male} onChange={(e) => set(["voice", "groq_voice_male"], e.target.value)} />
+                <input className="input" value={s.voice.groq_voice_female} onChange={(e) => set(["voice", "groq_voice_female"], e.target.value)} /></span></label>
+              <p className="text-xs text-ink-3">Needs <code>GROQ_API_KEY</code> in <code>.env</code>. Voice names depend on the model (see the Groq console's text-to-speech docs; some models need their terms accepted in the console once). Long lines are spoken in sentence-sized pieces. If a call fails that clip uses Kokoro/Piper instead.</p>
+            </div>)}
           <label className="text-sm">Max voice speed-up to fit a clip<input className="input" type="number" min={1} max={1.6} step={0.05} value={s.voice.max_speedup} onChange={(e) => set(["voice", "max_speedup"], Number(e.target.value))} /></label>
         </div>
       </Section>
@@ -220,8 +235,8 @@ function LocalServices() {
           <Row ok={st.threejs?.pack} name="Animation pack" fix={<>Optional: download the free CC0 <a className="underline" href="https://quaternius.itch.io/universal-animation-library" target="_blank" rel="noreferrer">Universal Animation Library</a> (Quaternius), save its glTF/GLB as <code>renderer/public/models/anim-pack.glb</code>, then <code>npm run build</code> in renderer/. README → Animation pack.</>}>
             {st.threejs?.pack ? "installed: walking, running, idle and more come from the pack" : "not installed: the base CC0 rig's moves are used"}</Row>
           <Row ok={st.stickman?.ok} name="Stickman animator" fix={st.stickman?.error}>{st.stickman?.ok ? "ready (Pillow + ffmpeg)" : ""}</Row>
-          <Row ok={st.tts?.kokoro || st.tts?.piper || st.tts?.elevenlabs} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx, or <code>ELEVENLABS_API_KEY</code> in .env</>}>
-            {[st.tts?.kokoro && "Kokoro", st.tts?.piper && "Piper", st.tts?.elevenlabs && "ElevenLabs (key set)"].filter(Boolean).join(", ") || "no engine installed: local clips will be silent"}</Row>
+          <Row ok={st.tts?.kokoro || st.tts?.piper || st.tts?.elevenlabs || st.tts?.groq} name="Voiceover (TTS)" fix={<><code>pip install kokoro soundfile</code> (best) or <code>pip install piper-tts</code> + a voice .onnx, or <code>ELEVENLABS_API_KEY</code> in .env</>}>
+            {[st.tts?.kokoro && "Kokoro", st.tts?.piper && "Piper", st.tts?.elevenlabs && "ElevenLabs (key set)", st.tts?.groq && "Groq (key set)"].filter(Boolean).join(", ") || "no engine installed: local clips will be silent"}</Row>
           <Row ok={st.whisper?.installed} name="Caption timing" fix={<><code>pip install faster-whisper</code> (word-accurate captions)</>}>
             {st.whisper?.installed ? `faster-whisper on ${st.whisper.device}` : "estimated timing"}</Row>
         </ul>

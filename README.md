@@ -100,7 +100,7 @@ You only need the keys for the parts you run live.
 | `FAL_KEY` | `omni-fal` render backend | https://fal.ai/dashboard/keys → Add key |
 | `GEMINI_API_KEY` | `omni-gemini` render backend | https://aistudio.google.com/apikey. Omni Flash needs the **paid tier** (enable billing on that Google Cloud project). |
 | `YOUTUBE_API_KEY` | Live YouTube discovery (search, stats, channel medians) | See below |
-| `GROQ_API_KEY` | Optional Groq writing model (Settings → Writing model → **Groq only** or **Hybrid: Claude directs, Groq writes the rest**) | https://console.groq.com/keys. Free tier is rate-limited; paid plans bill per token. |
+| `GROQ_API_KEY` | Optional: Groq for writing (Settings → Writing model → **Groq only** or **Hybrid: Claude directs, Groq writes the rest**), voiceover (Voice → **Groq**) and caption timing (Caption timing → **Groq Whisper**); **Use Groq for everything** sets all three | https://console.groq.com/keys. Free tier is rate-limited; paid plans bill per token / audio. Some speech models need their terms accepted once in the console. |
 | `ELEVENLABS_API_KEY` | Optional ElevenLabs voiceover for local video (Settings → Voice → ElevenLabs) | https://elevenlabs.io → Developers → API Keys. Billed per character on your ElevenLabs plan. |
 
 ### Get a YouTube Data API key (about 5 minutes, free)
@@ -177,8 +177,8 @@ The sidebar shows **LOCAL ($0)** when both writing and video run locally.
 |---|---|---|---|
 | Writing (research, scripts, direction) | Claude Agent SDK | Any OpenAI-compatible server: **Ollama** or LM Studio with `qwen3:8b` (about 5 GB, fits 8 GB VRAM). **Hybrid** keeps Claude for Phase A/B only. Or hosted: **Groq** (`GROQ_API_KEY`, OpenAI-compatible, e.g. `openai/gpt-oss-120b`), alone or as **Hybrid: Claude + Groq** | Writing model → Provider |
 | Video | omni-fal, omni-gemini | **local-stickman**: built-in animator, needs only ffmpeg + Pillow, about 8 s per clip on a laptop CPU. **local-comfyui**: Wan 2.1 1.3B / LTX-Video in ComfyUI on your GPU | Render → Backend |
-| Voiceover (local video only; Omni speaks on its own) | **ElevenLabs** (`ELEVENLABS_API_KEY`; pick voices with "Load my voices"; falls back to Kokoro/Piper if a call fails) | **Kokoro-82M** (`pip install kokoro soundfile`, Apache-2.0) or **Piper** (`pip install piper-tts` + a voice `.onnx`, MIT) | Voice and captions |
-| Caption timing | — | faster-whisper, on the GPU when CTranslate2 sees CUDA | Voice and captions |
+| Voiceover (local video only; Omni speaks on its own) | **ElevenLabs** (`ELEVENLABS_API_KEY`; pick voices with "Load my voices") or **Groq** speech (`GROQ_API_KEY`, default model `canopylabs/orpheus-v1-english`, voices troy/hannah); both fall back to Kokoro/Piper if a call fails | **Kokoro-82M** (`pip install kokoro soundfile`, Apache-2.0) or **Piper** (`pip install piper-tts` + a voice `.onnx`, MIT) | Voice and captions |
+| Caption timing | **Groq Whisper** (`whisper-large-v3-turbo`, `GROQ_API_KEY`) | faster-whisper, on the GPU when CTranslate2 sees CUDA | Voice and captions |
 
 Setup for an RTX 5050 laptop (8 GB):
 
@@ -406,7 +406,13 @@ Then restart the app and, for a project you already rendered:
    anyway: no fades between clips, no placeholder badges) and **Regenerate** every clip, then run **Stitch**.
 3. Read the `QA` lines in the Activity log or `final/qa.json`.
 
-Optional: `pip install faster-whisper` for word-accurate caption timing.
+Optional: `pip install faster-whisper` for word-accurate caption timing, or Settings → Voice and captions →
+Caption timing → **Groq Whisper** (with `GROQ_API_KEY`).
+
+**All on Groq:** put `GROQ_API_KEY` in `.env`, restart, Settings → Writing model → **Use Groq for everything** →
+Save. Writing, voiceover and caption timing then run on Groq (video still renders locally with three.js). If a
+Groq voice call fails a clip falls back to Kokoro/Piper; if Groq Whisper fails captions fall back to
+faster-whisper or the estimate. Check the speech model and voice names in the Groq console if the voice fails.
 
 ## 7. Known limits (read this)
 

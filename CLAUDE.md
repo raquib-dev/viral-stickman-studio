@@ -1,7 +1,8 @@
 # Viral Stickman Studio — notes for Claude
 
 Project skills live in `.claude/skills/` (vendored, unmodified; see `THIRD_PARTY.md`). Do not edit them;
-override behaviour from the app's prompts instead.
+override behaviour from the app's prompts instead. The exception is `dialogue-shorts-director`, which is
+this project's own skill (written from a study of reference reels) and may be edited.
 
 ## Path overrides for the vendored skills
 

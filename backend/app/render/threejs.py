@@ -399,13 +399,51 @@ def _nums(text: str) -> set[str]:
     return {m.group(0).replace(",", "").rstrip(".") for m in DIGITS.finditer(text or "")}
 
 
+_NUM_KEYS = {"t", "dur", "t_in", "t_out", "until", "amount", "speed", "intensity", "scale", "height", "seed", "zoom"}
+_VEC_KEYS = {"pos", "rot", "size", "position", "at", "target"}
+_NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
+_LISTS = ("mood", "actors", "props", "badges", "panels", "camera", "anim", "face", "gestures", "look", "path")
+
+
+def _coerce(v, key=""):
+    """Undo the type slips models make in structured output: JSON objects/arrays sent as strings, and numbers
+    sent as strings ("720", "1.5"). Only numeric fields become numbers, so on-screen text stays text."""
+    if isinstance(v, str):
+        t = v.strip()
+        if t[:1] in "{[" and t[-1:] in "}]":
+            try:
+                return _coerce(json.loads(t), key)
+            except json.JSONDecodeError:
+                return v
+        if (key in _NUM_KEYS or key == "#") and _NUM_RE.match(t):
+            return float(t)
+        return v
+    if isinstance(v, dict):
+        return {k: _coerce(x, k) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_coerce(x, "#" if key in _VEC_KEYS else key) for x in v]
+    return v
+
+
 def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = True,
                      known_assets: set | None = None) -> tuple[dict, list[str], list[str]]:
     """Make an AI-written plan safe to render. Unknown names fall back to safe defaults, times and positions
     are clamped into the clip and the frame, clutter is trimmed, and on-screen numbers the voiceover does not
     say are removed (never invent a statistic). Returns (scene, fixes made, errors that remain)."""
     C, fixes = CATALOG, []
-    s = json.loads(json.dumps(scene))
+    s = _coerce(json.loads(json.dumps(scene)))
+    for key in _LISTS[:6]:                                          # entries must be objects: drop stray strings
+        if isinstance(s.get(key), list) and any(not isinstance(x, dict) for x in s[key]):
+            if key == "mood":                                       # ["calm", ...] is still readable
+                s[key] = [x if isinstance(x, dict) else {"t": 0, "mood": x} for x in s[key]]
+                continue
+            fixes.append(f"dropped {sum(not isinstance(x, dict) for x in s[key])} malformed {key} entr(ies)")
+            s[key] = [x for x in s[key] if isinstance(x, dict)]
+    for a in s.get("actors") or []:
+        for key in _LISTS[6:]:
+            if key in a and (not isinstance(a[key], list) or any(not isinstance(x, dict) for x in a[key])):
+                fixes.append(f"dropped malformed {key} on {a.get('id', 'actor')}")
+                a[key] = [x for x in a[key] if isinstance(x, dict)] if isinstance(a[key], list) else []
     T = lambda v: round(min(max(float(v or 0), 0.0), duration), 2)  # noqa: E731
     xr = 1.2 if vertical else 2.2
     clampv = lambda v, lo, hi: [round(min(max(float(v[0]), lo[0]), hi[0]), 2), round(min(max(float(v[1]), lo[1]), hi[1]), 2),  # noqa: E731
@@ -478,6 +516,9 @@ def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = Tru
             fixes.append(f"dropped prop {p.get('type')!r}"); continue
         if p.get("pos") is not None:
             p["pos"] = clampv(p["pos"], [-xr, 0, -2.5], [xr, 2.4, 1.2])
+        if p.get("hold") and not isinstance(p["hold"], dict):      # "hero", "R" or true -> held by that actor
+            h = p["hold"]
+            p["hold"] = {"hand": h} if h in ("L", "R") else {"actor": h} if isinstance(h, str) else {}
         if p.get("hold") and p["hold"].get("actor") not in ids:
             p["hold"]["actor"] = actors[0]["id"]
         p["t_in"] = T(p.get("t_in"))

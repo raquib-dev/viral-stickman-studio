@@ -140,3 +140,23 @@ async def test_skips_for_other_backends_and_dry_run_uses_fixture(monkeypatch):
     s1 = json.loads((root / "scenes/clip-01.json").read_text())
     assert s1["_planned_by"] == "fixture (dry run)" and tj.validate_scene(s1) == []
     await manager.stop()
+
+
+def test_repair_survives_stringly_typed_model_output():
+    """Claude's structured output once sent numbers as strings and `hold` as a bare actor id; that crashed the stage."""
+    from backend.app.render import threejs as tj
+    raw = {"version": "2", "width": "720", "height": "1280", "fps": "30", "duration": "10.0", "style": "cozy", "theme": "dark",
+           "mood": [{"t": "0", "mood": "money"}],
+           "actors": [{"id": "hero", "gestures": [{"t": "1.5", "gesture": "point", "dur": "2", "target": "p1"}],
+                       "path": '[{"t": 0, "pos": ["-1", 0, "0"]}]', "anim": ["Idle"]}],
+           "props": [{"id": "p1", "type": "mug", "hold": "hero", "t_in": "0.5"}, {"id": "p2", "type": "mug", "hold": "R"}, "coin"],
+           "badges": [{"text": "19", "t_in": "2"}], "camera": [{"t": "0", "shot": "medium"}]}
+    s, fixes, errs = tj.check_and_repair(raw, "I saved 19 coins.", 10.0, True)
+    assert errs == []
+    assert s["props"][0]["hold"] == {"actor": "hero"} and s["props"][1]["hold"] == {"hand": "R", "actor": "hero"}
+    assert len(s["props"]) == 2 and s["props"][0]["t_in"] == 0.5
+    g = s["actors"][0]["gestures"][0]
+    assert g["t"] == 1.5 and g["dur"] == 2.0 and g["target"] == "p1"
+    assert s["actors"][0]["path"][0]["pos"] == [-1.0, 0.0, 0.0] and s["actors"][0]["anim"] == []
+    assert s["badges"][0]["text"] == "19"                            # on-screen text stays text
+    assert any("malformed" in f for f in fixes)

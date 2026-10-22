@@ -235,9 +235,15 @@ async def scene_plan(ctx) -> dict:
                 ctx.log(f"clip {sp.index + 1}: AI plan failed ({str(e)[:200]}); using the keyword plan", "warn")
                 break
             body = {k: v for k, v in res.items() if k not in ("notes", "_fixture")}
-            candidate = {**{k: draft[k] for k in ("version", "width", "height", "fps", "duration", "style", "theme", "seed", "quality")}, **body}
+            # frame size, fps, length and seed are the app's, never the model's (it may echo them back, even as strings)
+            tech = ("version", "width", "height", "fps", "duration", "seed", "quality")
+            candidate = {**{k: draft[k] for k in ("style", "theme")}, **body, **{k: draft[k] for k in tech}}
             candidate.setdefault("transition", draft["transition"])
-            fixed, fx, er = tj.check_and_repair(candidate, sp.vo, sp.duration, h > w, {k["key"] for k in known})
+            try:
+                fixed, fx, er = tj.check_and_repair(candidate, sp.vo, sp.duration, h > w, {k["key"] for k in known})
+            except Exception as e:                                  # a shape the repairer does not know: retry, then keywords
+                fixed, fx, er = candidate, [], [f"the plan has a malformed field ({type(e).__name__}: {str(e)[:120]}); "
+                                                "follow the JSON schema types exactly"]
             if not er:
                 scene, fixes, by, notes = fixed, fx, "fixture (dry run)" if res.get("_fixture") else "ai", res.get("notes", "")
                 break

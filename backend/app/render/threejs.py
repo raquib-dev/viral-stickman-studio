@@ -379,17 +379,23 @@ class ThreeJSBackend:
         fps = int(self.cfg.get("fps", 24))
         dcfg = self.settings.get("dialogue", {})
         wpm = float(self.settings.get("speaking_wpm", 150))
+        # performed lines go to ElevenLabs' most expressive model with a drama preset (low stability), whatever the
+        # narrated videos use; other engines get the words without the audio tags (tts.synth removes them)
+        vs = {**self.settings, "voice": {**self.settings["voice"],
+                                         "elevenlabs_model": dcfg.get("elevenlabs_model", "eleven_v4"),
+                                         "elevenlabs_stability": float(dcfg.get("elevenlabs_stability", 0.3)),
+                                         "elevenlabs_similarity": float(dcfg.get("elevenlabs_similarity", 0.8))}}
         parts, durs = [], []
         for k, ln in enumerate(clip.lines):
             voice = clip.cast[ln["speaker"]]["voice"]
             f = out.with_suffix(f".line{k:02d}.wav")
-            got = await asyncio.to_thread(tts.synth, ln["text"], f, self.settings, voice, log)
+            got = await asyncio.to_thread(tts.synth, ln["text"], f, vs, voice, log)
             if got and voice == "mascot":
                 await asyncio.to_thread(tts.pitch, got, float(dcfg.get("mascot_pitch", 1.0)))
             parts.append(got)
             durs.append(probe(got)["duration"] if got else dlg.line_seconds(ln["text"], wpm))
-        pauses = [bool(dlg.PAUSE_RE.match(ln["text"])) for ln in clip.lines]
-        timing = dlg.layout(durs, pauses, clip.duration, float(self.settings["voice"].get("max_speedup", 1.3)))
+        timing = dlg.layout(durs, [dlg.timing_of(ln) for ln in clip.lines], clip.duration,
+                            float(self.settings["voice"].get("max_speedup", 1.3)))
         if timing["tempo"] > 1.001:
             log(f"clip {clip.index + 1}: lines sped up x{timing['tempo']} to fit 10 s", "warn")
         if timing["overflow"] > 0.05:
@@ -416,7 +422,7 @@ class ThreeJSBackend:
         scene_path.write_text(json.dumps(scene, indent=1), encoding="utf-8")
         names = {k: clip.cast[k]["name"] for k in dlg.SPEAKERS}
         log(f"local-threejs clip {clip.index + 1}: dialogue, {len(clip.lines)} lines · "
-            + ", ".join(("wide" if p["shot"] == "wide" else f"{names[p['shot']]} close-up") for p in clip.plan)
+            + ", ".join(dlg.shot_label(p["shot"], names) for p in clip.plan)
             + (" · lip sync from the voices" if voiced else " · no voice engine: silent"))
         silent = out.with_suffix(".silent.mp4")
         qa = await self._render(scene_path, silent, clip, log)
@@ -424,7 +430,7 @@ class ThreeJSBackend:
         for f in [silent, mix, *[x for x in parts if x]]:
             f.unlink(missing_ok=True)
         lf = await asyncio.to_thread(last_frame, out, out.with_suffix(".last.png"))
-        timed = [{"i": ln["i"], "speaker": ln["speaker"], "text": ln["text"], "start": t0, "end": t1}
+        timed = [{"i": ln["i"], "speaker": ln["speaker"], "text": dlg.clean(ln["text"]), "start": t0, "end": t1}
                  for ln, t0, t1 in zip(clip.lines, timing["starts"], timing["ends"])]
         return ClipResult(clip.index, out, clip.duration, 0.0, self.name, last_frame=lf,
                           meta={"scene": scene_path.name, "voice": voiced, "planned_by": "dialogue", "qa": qa, "lines": timed,

@@ -122,8 +122,12 @@ NICHE PATTERN PROFILE: {_j(profile_summary)}"""
         prompt += f"""
 
 THIS IS A TWO-CHARACTER DIALOGUE SHORT: SAY is the first line, spoken by {dialogue['a']['name']} ({dialogue['a']['role']}) to
-{dialogue['b']['name']} ({dialogue['b']['role']}), 2-8 words, deadpan, and it drops us into the middle of a situation
-(e.g. "Claude. The client said it's great."). WRITE is unused on screen in this format; keep it short anyway."""
+{dialogue['b']['name']} ({dialogue['b']['role']}). Make it a performance, not a sentence: 2-8 words that start in the
+middle of a feeling and a situation, so the first second already has tension or a laugh. Write the delivery into
+it for an expressive voice: one audio tag in square brackets ([exasperated], [deadpan], [panicked], [whispers]),
+stretched letters where a person would draw a word out, CAPS on the one word that lands. For example:
+"[exasperated] Claaauude!! The client said it's GREAT." or "[whispers] Don't. Touch. The footer."
+Each of the hooks uses a different emotion. WRITE is unused on screen in this format; keep it short anyway."""
     h = _obj({"id": STR, "say": STR, "write": STR, "show": STR, "align": STR, "formula": STR, "why": STR})
     return AgentTask("hooks", prompt, _obj({"hooks": _arr(h, 3)}), [skill, "yt-script"], "direction",
                      {"topic": topic, "niche": niche, "platform": platform, "profile_summary": profile_summary, "n": n,
@@ -204,27 +208,36 @@ LINES:
 
 # ---- direction ------------------------------------------------------------------------------
 
-DIALOGUE_RULES = """THE FORMAT: a two-character deadpan comedy short. No narrator: only the two characters talk, one short line at a
-time, at a desk late at night. Hard cuts on every line, so every line must earn its cut.
+DIALOGUE_RULES = """THE FORMAT: a two-character comedy short. No narrator: only the two characters talk, one short line at a
+time, at a desk late at night. Hard cuts on every line, so every line must earn its cut. Each line is sent as written
+to an expressive voice model (ElevenLabs Eleven v4), so the script carries the acting.
 
 Rules (an app checks them and sends the script back if one breaks):
 1. Lines are short: mostly 2-7 words, never more than 9. Write how tired people actually talk ("You counted?").
 2. Ping-pong. Nobody has more than 3 lines in a row, and each character has at least 30% of the lines.
-3. Pause beats: start a line with "..." when a character needs a moment ("...They were bad."). Use 2-4 of them.
-4. Oddly specific in-story numbers make the jokes: counts, times, sizes ("Sixty-one times.", "It's 1 AM.",
+3. Write the performance into the text, like a human actor would play it:
+   - an audio tag in square brackets before the words (or mid-line) for the emotion: [exasperated], [deadpan],
+     [sighs], [sarcastic], [excited], [proudly], [whispers], [groans], [nervously], [laughs], [flatly],
+     [cheerfully], [annoyed]. At most 2 per line; at least a third of the lines have one.
+   - stretched letters where a person draws a word out ("Claaauude!!", "Nooo.", "Fiiine."), CAPS on the one
+     word that lands ("It was the WRONG blue."), "..." inside a line for a hesitation, "!!" for a burst.
+   - vary the emotion: annoyed, deadpan, proud, panicked, guilty, delighted; not one flat tone.
+4. Timing, like real conversation, for every line: "quick" (answers straight back, no gap; at least 2),
+   "normal", or "beat" (a sharp look first, then the answer; 1-3 of them, where the silence is the joke).
+5. Oddly specific in-story numbers make the jokes: counts, times, sizes ("Sixty-one times.", "It's 1 AM.",
    "Two pixels."). At least 2. They are details about these characters, never facts about the world: no
    percentages, studies, research, surveys or averages.
-5. A callback: a later line repeats an earlier phrase with a new meaning ("It's great!" after "That's great!",
+6. A callback: a later line repeats an earlier phrase with a new meaning ("It's great!" after "That's great!",
    "the wrong blue" twice).
-6. A turn in the second half: the line where the meaning flips (the AI credits the human's taste, the human
+7. A turn in the second half: the line where the meaning flips (the AI credits the human's taste, the human
    admits something). Give its line number as `turn`.
-7. The ending loops back: the last line restarts the situation (one more tiny fix, the same name, the same
+8. The ending loops back: the last line restarts the situation (one more tiny fix, the same name, the same
    hour), so the video invites a rewatch. Give the punchline line number as `button`.
-8. Line 1 is the approved hook, word for word, spoken by character a.
-9. TITLE: all lowercase, a quote or paraphrase of the script's best line, then a question to the viewer that
+9. Line 1 is the approved hook, word for word (with its delivery), spoken by character a.
+10. TITLE: all lowercase, no tags, a quote or paraphrase of the script's best line, then a question to the viewer that
    invites a comment ("she said no sixty-one times. that's the job. what's the pettiest thing you've made your AI
    redo?"). At most 110 characters.
-10. Insider humour for the niche is good (a known quirk of AI tools, a developer's habit), but never mock a real,
+11. Insider humour for the niche is good (a known quirk of AI tools, a developer's habit), but never mock a real,
    named person, and keep it kind."""
 
 
@@ -255,9 +268,11 @@ APPROVED HOOK (line 1, character a, word for word): {hook['say']}
 NICHE: {niche}
 NICHE PATTERN PROFILE: {_j(profile_summary)}
 {revision}
-Return the lines in order as {{"speaker": "a"|"b", "text": "..."}}, plus `turn` and `button` (1-based line numbers),
+Return the lines in order as {{"speaker": "a"|"b", "text": "<delivery tags + words>", "timing": "quick"|"normal"|"beat"}},
+plus `turn` and `button` (1-based line numbers),
 the `title`, and `claims_to_source` (anything a viewer could read as a real-world fact; usually empty)."""
-    line = _obj({"speaker": {"type": "string", "enum": ["a", "b"]}, "text": STR}, ["speaker", "text"])
+    line = _obj({"speaker": {"type": "string", "enum": ["a", "b"]}, "text": STR,
+                 "timing": {"type": "string", "enum": ["quick", "normal", "beat"]}}, ["speaker", "text", "timing"])
     schema = _obj({"title": STR, "lines": _arr(line, 4), "turn": INT, "button": INT, "claims_to_source": _arr(STR)},
                   ["title", "lines", "turn", "button"])
     return AgentTask("dialogue_script", prompt, schema, ["ig-reel", "ig-human"], "direction",

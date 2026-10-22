@@ -21,17 +21,18 @@ CAST = d.cast_for({})
 HOOK = "Claude. The client said it's great."
 
 
-def L(*pairs):
-    return [{"speaker": s, "text": t} for s, t in pairs]
+def L(*items):
+    return [{"speaker": x[0], "text": x[1], "timing": x[2] if len(x) > 2 else "normal"} for x in items]
 
 
 GOOD = {"title": "she said no sixty-one times. that's the job. what's the pettiest thing you've made your ai redo?",
-        "turn": 12, "button": 16, "lines": L(
-            ("a", HOOK), ("b", "That's great!"), ("a", "I didn't build it. You did."), ("b", "I wrote four thousand lines."),
-            ("a", "...They were bad."), ("a", "I just said no a lot."), ("b", "Sixty-one times."), ("a", "You counted?"),
-            ("b", "You said it very clearly."), ("a", "Anyone can say no."), ("b", "I can't. I say yes."), ("b", "Knowing that is the job."),
-            ("a", "...Okay. It's good."), ("b", "It's great!"), ("a", "The footer's two pixels off."), ("b", "It's 1 AM."),
-            ("a", "Two pixels, Claude."))}
+        "turn": 12, "button": 17, "lines": L(
+            ("a", HOOK), ("b", "[excited] That's GREAT!", "quick"), ("a", "[flatly] I didn't build it. You did."),
+            ("b", "[proudly] I wrote four thousand lines.", "quick"), ("a", "[deadpan] They were bad.", "beat"),
+            ("a", "I just said no a lot."), ("b", "[cheerfully] Sixty-one times.", "quick"), ("a", "[sighs] You counted?"),
+            ("b", "You said it very clearly."), ("a", "Anyone can say no."), ("b", "[nervously] I can't. I say yes.", "quick"),
+            ("b", "Knowing that is the job."), ("a", "...Okay. It's good.", "beat"), ("b", "[excited] It's great!!", "quick"),
+            ("a", "[annoyed] The footer's two pixels off."), ("b", "It's 1 AM."), ("a", "[exasperated] Two pixels, Claaauude."))}
 
 
 def test_cast_defaults_merge_and_repair():
@@ -41,16 +42,37 @@ def test_cast_defaults_merge_and_repair():
     assert d.DEFAULT_CAST["a"]["name"] == "Mia"                         # defaults are never mutated
 
 
+def test_delivery_text_helpers():
+    t = "[exasperated] Claaauude!! The client said it's GREAT."
+    assert d.clean(t) == "Claaauude!! The client said it's GREAT." and d.tags(t) == ["exasperated"]
+    assert d.squash(t) == d.squash("Claude. The client said it's great.")       # stretched/tagged hook still matches
+    assert d.words(t) == 6
+    assert d.timing_of({"text": "...Fine."}) == "beat" and d.timing_of({"text": "Fine.", "timing": "quick"}) == "quick"
+    assert tts.strip_tags("[sighs] Fine. [laughs]") == "Fine." and tts.expressive("eleven_v4") and not tts.expressive("eleven_multilingual_v2")
+
+
 def test_good_script_passes_and_each_rule_is_checked():
     assert d.dialogue_flags(GOOD, CAST, HOOK, 60, 150) == []
-    bad = {**GOOD, "title": "She Said No.", "turn": 2, "lines": [
+    tagged_hook = {**GOOD, "lines": [{"speaker": "a", "text": "[exasperated] Claaauude. The client said it's GREAT.", "timing": "normal"},
+                                     *GOOD["lines"][1:]]}
+    assert d.dialogue_flags(tagged_hook, CAST, HOOK, 60, 150) == []
+    bad = {**GOOD, "title": "She Said No [sighs].", "turn": 2, "lines": [
         {"speaker": "b", "text": "Hello there."}, *GOOD["lines"][1:5],
         {"speaker": "a", "text": "Studies show 80% of developers redo things at least twice every week."},
-        {"speaker": "a", "text": "Fine."}, {"speaker": "a", "text": "Fine again."}, {"speaker": "a", "text": "And {{your number}}."}]}
+        {"speaker": "a", "text": "[a] [b] [c] Fine."}, {"speaker": "a", "text": "Fine again.", "timing": "slow"},
+        {"speaker": "a", "text": "And {{your number}}."}]}
     flags = " | ".join(d.dialogue_flags(bad, CAST, HOOK, 60, 150))
     for part in ("lines for 60s", "the first line is Mia's", "approved hook", "words (max 9", "real-world statistic",
-                 "4 lines in a row", "{{gap}}", "mark the turn", "ends with a question", "all lowercase"):
+                 "4 lines in a row", "{{gap}}", "mark the turn", "ends with a question", "all lowercase", "delivery tags (max 2)",
+                 "timing must be quick, normal or beat", "no delivery tags in the title"):
         assert part in flags, part
+
+
+def test_performance_and_rhythm_are_required():
+    flat = {**GOOD, "lines": [{**ln, "text": d.clean(ln["text"]).replace("!!", "!").replace("aaau", "au"), "timing": "normal"}
+                              for ln in GOOD["lines"]]}
+    flags = " | ".join(d.dialogue_flags(flat, CAST, HOOK, 60, 150))
+    assert "write the performance into the lines" in flags and "at least 2 lines answer straight back" in flags and "beats" in flags
 
 
 def test_callback_and_loop_are_detected():
@@ -68,52 +90,81 @@ def test_lines_group_into_clips_in_order_without_splitting():
     long = L(*[("a" if k % 2 else "b", "this line has quite a lot of words in it now") for k in range(40)])
     assert d.group_lines(long, 6, 150) is None                          # cannot fit 60 s
     clips = d.clips_from_lines(GOOD["lines"], g)
-    assert clips[0]["lines"][0] == {"i": 0, "speaker": "a", "text": HOOK} and clips[0]["vo"].startswith(HOOK)
+    assert clips[0]["lines"][0] == {"i": 0, "speaker": "a", "text": HOOK, "timing": "normal"} and clips[0]["vo"].startswith(HOOK)
+    assert "[" not in " ".join(c["vo"] for c in clips)                   # the pipeline's text has no tags
 
 
-def test_shot_plan_rules():
+def test_direction_rules():
     plan = d.plan_shots(GOOD["lines"])
     shots = [p["shot"] for p in plan]
-    assert shots[0] == "a" and shots[1] == "b"                          # starts on the speaker's close-up
-    assert shots[5] == "wide"                                           # the same person twice in a row: new angle
-    assert shots[-1] == "wide" and shots[-2] == "wide"                  # the button plays wide
-    run = 0
-    for s in shots:                                                     # never more than 6 close-ups in a row
-        run = 0 if s == "wide" else run + 1
-        assert run <= 6
-    assert plan[7]["face"] == "confused" and plan[7]["gesture"] == "think"      # "You counted?"
-    assert plan[1]["gesture"] == "cheer" and plan[1]["face"] == "happy"         # the mascot hops on "That's great!"
+    assert shots[0] == "a_cu"                                           # the hook lands in her face
+    assert shots[1] == "b_ots"                                          # a quick answer: both in frame
+    assert shots[4] == "a_cu"                                           # a beat: the responder's close-up
+    assert shots[5] == "two"                                            # the same person twice: a new angle
+    assert shots[-1].startswith("wide") and shots[-2] == "two"          # the button plays wide
+    assert all(x != y for x, y in zip(shots, shots[1:]))                # never the same framing twice in a row
+    since = 0
+    for sh in shots:                                                    # both characters in frame at least every 5 lines
+        since = 0 if sh in ("two", "wide0", "wide1") or sh.endswith("_ots") else since + 1
+        assert since <= 5
+    assert {"a_third", "b_third"} & set(shots)                          # off-centre framings are used
+    assert plan[7]["face"] == "skeptical"                               # [sighs] You counted?
+    assert plan[1]["face"] == "happy" and plan[1]["gesture"] == "cheer" # [excited] That's GREAT!
+    assert all(d.shot_label(sh, {"a": "Mia", "b": "Claude"}) for sh in shots)
 
 
-def test_layout_keeps_lines_apart_and_inside_the_clip():
-    t = d.layout([1.2, 0.8, 1.5, 0.9], [False, False, True, False])
+def test_layout_follows_each_lines_timing():
+    t = d.layout([1.2, 0.8, 1.5, 0.9], ["normal", "quick", "beat", "normal"])
     assert t["tempo"] == 1.0 and t["overflow"] == 0
-    for k in range(3):
-        assert t["starts"][k + 1] - t["ends"][k] >= 0.3
-    # line 3 starts with a pause beat ("..."): the silence before it is the longest
-    assert t["starts"][2] - t["ends"][1] > t["starts"][3] - t["ends"][2] and t["starts"][2] - t["ends"][1] > t["starts"][1] - t["ends"][0]
-    long = d.layout([3.0, 2.6, 2.8, 2.4], [False] * 4)
+    g = [t["starts"][k + 1] - t["ends"][k] for k in range(3)]
+    assert g[0] < 0.1 and g[1] > 0.6 and 0.15 <= g[2] <= 0.25           # quick answer, a beat, a normal turn
+    long = d.layout([3.0, 2.6, 2.8, 2.4], ["normal"] * 4)
     assert 1.0 < long["tempo"] <= 1.25 and long["ends"][-1] <= 10.0
     assert all(long["starts"][k + 1] >= long["ends"][k] for k in range(3))
-    over = d.layout([4.0, 4.0, 4.0], [False] * 3, max_speedup=1.1)
+    over = d.layout([4.0, 4.0, 4.0], ["normal"] * 3, max_speedup=1.1)
     assert over["overflow"] > 0
+    short = d.layout([0.8, 0.7], ["normal", "normal"])                  # spare time never becomes dead air mid-talk
+    assert short["starts"][1] - short["ends"][0] <= 0.21
 
 
 def test_scene_is_valid_with_a_cut_per_line_and_mouths_per_speaker():
-    plan = d.plan_shots(GOOD["lines"][:4])
-    timing = d.layout([1.6, 0.9, 1.4, 1.5], [False] * 4)
+    plan = d.plan_shots(GOOD["lines"][:5])
+    timing = d.layout([1.6, 0.9, 1.4, 1.5, 0.8], [p["timing"] for p in plan])
     env = [0.5] * 240
     mouths = d.speaker_mouths(env, plan, timing, 24)
     scene = d.build_scene(plan, timing, CAST, mouths, 24, 720, 1280, 10.0, seed=3, quality="high")
     assert tj.validate_scene(scene) == []
     cams = scene["camera"]
-    assert len(cams) == 4 and all(k["cut"] for k in cams) and cams[0]["t"] == 0
+    assert len(cams) == 5 and all(k["cut"] for k in cams) and cams[0]["t"] == 0
     assert all(b["t"] > a["t"] for a, b in zip(cams, cams[1:]))
+    assert cams[4]["t"] <= timing["ends"][3] + 0.06                      # a beat cuts to the responder's look early
     a, b = scene["actors"]
+    assert {"t": round(timing["ends"][3], 3), "expr": "skeptical"} in a["face"]
     assert a["kind"] == "chibi" and b["kind"] == "mascot" and scene["style"] == "night"
     f = int(timing["starts"][1] * 24) + 2                               # mascot's line: only its mouth moves
     assert b["mouth"]["values"][f] > 0 and a["mouth"]["values"][f] == 0
     assert scene["transition"] == {"in": "none", "out": "none"}
+
+
+def test_elevenlabs_v4_request_and_tags(tmp_path, monkeypatch):
+    import httpx
+
+    from backend.app import settings as S
+    monkeypatch.setattr(S, "_env_cache", {"ELEVENLABS_API_KEY": "sk_test_0123456789"})
+    sent = []
+    mp3 = subprocess.run([ffmpeg_bin(), "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=0.5", "-f", "mp3", "-"],
+                         capture_output=True, check=True).stdout
+
+    def handler(req):
+        sent.append(json.loads(req.content))
+        return httpx.Response(200, content=mp3)
+    v = {**S.DEFAULTS["voice"], "elevenlabs_model": "eleven_v4", "elevenlabs_stability": 0.3}
+    tts.elevenlabs_say("[exasperated] Claaauude!!", tmp_path / "a.wav", v, "female", transport=httpx.MockTransport(handler))
+    assert sent[0]["model_id"] == "eleven_v4" and sent[0]["text"] == "[exasperated] Claaauude!!"
+    assert sent[0]["voice_settings"] == {"stability": 0.3, "similarity_boost": 0.75}       # v4 takes only these two
+    tts.elevenlabs_say("[sighs] Fine.", tmp_path / "b.wav", {**v, "elevenlabs_model": "eleven_multilingual_v2"}, "female",
+                       transport=httpx.MockTransport(handler))
+    assert sent[1]["text"] == "Fine." and "style" in sent[1]["voice_settings"]               # older model: no tags
 
 
 def test_line_captions_never_overlap_and_sit_at_the_top():
@@ -250,7 +301,7 @@ async def test_real_render_needs_the_threejs_backend(monkeypatch):
 @pytest.mark.skipif(not READY, reason="node + renderer build not present")
 def test_dialogue_scene_renders_with_cuts(tmp_path):
     plan = d.plan_shots(GOOD["lines"][:3])
-    timing = d.layout([1.0, 0.7, 1.0], [False] * 3, clip_len=4.0)
+    timing = d.layout([1.0, 0.7, 1.0], ["normal"] * 3, clip_len=4.0)
     scene = d.build_scene(plan, timing, CAST, {}, 6, 120, 214, 4.0, seed=3, quality="draft")
     sp = tmp_path / "s.json"
     sp.write_text(json.dumps(scene))
@@ -265,7 +316,7 @@ def test_dialogue_scene_renders_with_cuts(tmp_path):
 def test_still_motion_is_the_default_and_lively_restores_gestures():
     lines = L(("a", HOOK), ("b", "That's great!"), ("a", "You counted?"), ("b", "Sixty-one times!"))
     plan = d.plan_shots(lines)
-    timing = d.layout([1.6, 0.9, 1.0, 1.2], [False] * 4)
+    timing = d.layout([1.6, 0.9, 1.0, 1.2], [p["timing"] for p in plan])
     still = d.build_scene(plan, timing, CAST, {}, 24, 720, 1280, 10.0, seed=3, quality="draft")
     a, b = still["actors"]
     assert a["still"] and b["still"]

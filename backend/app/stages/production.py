@@ -58,11 +58,15 @@ def _clip_specs(ctx, p: dict) -> list[ClipSpec]:
     return specs
 
 
+def _plan_lines(lines: list[dict]) -> list[dict]:
+    return [{"speaker": ln["speaker"], "text": ln["text"], "timing": dlg.timing_of(ln)} for ln in lines]
+
+
 def dialogue_plan(ctx, script: dict) -> list[dict]:
     """The saved shot plan when it matches the script's lines, else a fresh one (it is deterministic and free)."""
     lines = script.get("lines") or [ln for c in script.get("clips", []) for ln in c.get("lines", [])]
     saved = ctx.read_json("scenes/dialogue.json", default={}) if ctx.path("scenes/dialogue.json").exists() else {}
-    if saved.get("lines") == [{"speaker": ln["speaker"], "text": ln["text"]} for ln in lines] and saved.get("plan"):
+    if saved.get("lines") == _plan_lines(lines) and saved.get("plan") and saved.get("version") == dlg.PLAN_VERSION:
         return saved["plan"]
     return dlg.plan_shots(lines)
 
@@ -216,21 +220,22 @@ async def _dialogue_scene_plan(ctx) -> dict:
         raise StageError("the script has no dialogue lines; re-run Script")
     plan = dlg.plan_shots(lines)
     cast = dlg.cast_for(ctx.project_data())
-    ctx.write_json("scenes/dialogue.json", {"lines": [{"speaker": ln["speaker"], "text": ln["text"]} for ln in lines],
-                                            "plan": plan, "cast": {k: cast[k]["name"] for k in dlg.SPEAKERS}})
-    index = {}
+    ctx.write_json("scenes/dialogue.json", {"version": dlg.PLAN_VERSION, "lines": _plan_lines(lines), "plan": plan,
+                                            "cast": {k: cast[k]["name"] for k in dlg.SPEAKERS}})
+    index, names = {}, {k: cast[k]["name"] for k in dlg.SPEAKERS}
     for c in s["clips"]:
         ps = [plan[ln["i"]] for ln in c.get("lines", [])]
         index[str(c["index"] + 1)] = {
             "planned_by": "dialogue", "style": "night", "moods": ["neutral"], "actors": 2, "panels": 0, "badges": [], "props": [],
             "gestures": sorted({p["gesture"] for p in ps if p.get("gesture")}),
-            "shots": [("wide" if p["shot"] == "wide" else f"close-up {cast[p['shot']]['name']}") for p in ps],
-            "notes": " / ".join(f"{cast[ln['speaker']]['name']}: {ln['text']}" for ln in c.get("lines", [])),
+            "shots": [dlg.shot_label(p["shot"], names) for p in ps],
+            "notes": " / ".join(f"{cast[ln['speaker']]['name']}: {dlg.clean(ln['text'])}" for ln in c.get("lines", [])),
             "fixes": [], "file": "scenes/dialogue.json", "updated_at": time.time()}
         ctx.log(f"clip {c['index'] + 1}: " + ", ".join(index[str(c['index'] + 1)]["shots"]))
     ctx.write_json("scenes/index.json", index)
-    wides = sum(1 for p in plan if p["shot"] == "wide")
-    ctx.log(f"dialogue plan: {len(plan)} lines, {wides} wide shot(s), {len(plan) - wides} close-ups, all hard cuts")
+    both = sum(1 for p in plan if p["shot"] in ("two", "wide0", "wide1") or p["shot"].endswith("_ots"))
+    ctx.log(f"dialogue plan: {len(plan)} lines, {both} with both characters in frame, "
+            f"{sum(1 for p in plan if p['timing'] == 'quick')} quick answers, {sum(1 for p in plan if p['timing'] == 'beat')} beats; hard cuts")
     return {"outputs": ["scenes/dialogue.json", "scenes/index.json"]}
 
 

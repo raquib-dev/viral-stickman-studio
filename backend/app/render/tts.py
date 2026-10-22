@@ -12,6 +12,7 @@ All write a WAV. `fit_to_clip` then muxes it under a clip, speeding speech up a 
 from __future__ import annotations
 
 import functools
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,18 @@ VO_LEAD = 0.25   # seconds of quiet before the narrator starts inside a clip (af
 
 class TTSUnavailable(RuntimeError):
     pass
+
+
+AUDIO_TAG = re.compile(r"\[[^\[\]]{1,40}\]")
+
+
+def expressive(model: str) -> bool:
+    """ElevenLabs models that perform audio tags ([whispers], [sighs]...) written in the text."""
+    return str(model or "").startswith(("eleven_v3", "eleven_v4"))
+
+
+def strip_tags(text: str) -> str:
+    return re.sub(r"\s{2,}", " ", AUDIO_TAG.sub("", text or "")).strip()
 
 
 def voice_for(v: dict, engine: str, pref: str) -> str:
@@ -103,10 +116,13 @@ def elevenlabs_say(text: str, out: Path, v: dict, voice_pref: str = "male", log=
     if not key:
         raise TTSUnavailable("ELEVENLABS_API_KEY is not set in .env")
     voice = voice_for(v, "elevenlabs", voice_pref) or "pNInz6obpgDQGcFmaJgB"
-    body = {"text": text, "model_id": v.get("elevenlabs_model", "eleven_multilingual_v2"),
-            "voice_settings": {"stability": float(v.get("elevenlabs_stability", 0.5)),
-                               "similarity_boost": float(v.get("elevenlabs_similarity", 0.75)),
-                               "style": float(v.get("elevenlabs_style", 0.0)), "use_speaker_boost": True}}
+    model = v.get("elevenlabs_model", "eleven_v4")
+    settings = {"stability": float(v.get("elevenlabs_stability", 0.5)), "similarity_boost": float(v.get("elevenlabs_similarity", 0.75))}
+    if not model.startswith("eleven_v4"):          # Eleven v4 takes only stability and similarity (no style, no boost)
+        settings.update({"style": float(v.get("elevenlabs_style", 0.0)), "use_speaker_boost": True})
+    if not expressive(model):
+        text = strip_tags(text)                    # older models would read "[sighs]" out loud
+    body = {"text": text, "model_id": model, "voice_settings": settings}
     mp3 = out.with_suffix(".eleven.mp3")
     with httpx.Client(timeout=120, transport=transport) as http:
         for attempt in range(3):
@@ -254,12 +270,13 @@ def _synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=N
         try:
             if name == "elevenlabs":
                 return elevenlabs_say(text, out, v, voice_pref, log)
+            # these engines cannot perform audio tags: they get the words only
             if name == "groq":
-                return groq_say(text, out, v, voice_pref, log)
+                return groq_say(strip_tags(text), out, v, voice_pref, log)
             if name == "kokoro":
                 voice = voice_for(v, "kokoro", voice_pref) or "am_michael"
-                return kokoro_say(text, out, voice)
-            return piper_say(text, out, v.get("piper_model", ""))
+                return kokoro_say(strip_tags(text), out, voice)
+            return piper_say(strip_tags(text), out, v.get("piper_model", ""))
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}: {str(e)[:200]}")
             if name in ("elevenlabs", "groq") and log:

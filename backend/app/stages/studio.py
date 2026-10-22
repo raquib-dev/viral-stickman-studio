@@ -36,27 +36,28 @@ async def hooks(ctx) -> dict:
     profile = ctx.read_json("research/niche-profile.json")
     res = await ctx.agent.run(tasks.hooks(topic, p["niche"], fmt, profile["summary"],
                                           dialogue=dlg.cast_for(p) if dlg.is_dialogue(p) else None), ctx)
-    says = [h["say"] for h in res["hooks"]]
+    # scored on the spoken words: dialogue hooks carry delivery tags ([exasperated]) for the voice
+    says = [dlg.clean(h["say"]) for h in res["hooks"]]
     yt = {r["hook"]: r for r in await th(tools.yt_hookscore, says)}
     ig = {r["hook"]: r for r in await th(tools.ig_hookscore, says)}
     igf = await th(tools.ig_formula, says)
     panel = primary_hook_panel(fmt, p.get("platforms", []))
     scored = []
     for h in res["hooks"]:
-        key = h["say"].replace("\n", " ").strip()
+        key = dlg.clean(h["say"]).replace("\n", " ").strip()
         y, i = yt.get(key, {}), ig.get(key, {})
         ys, is_ = float(y.get("verdict", 0)), float(i.get("score", 0))
         rank_score = {"yt": ys, "ig": is_, "mean": (ys + is_) / 2}[panel]
         flags = list(i.get("flags", []))
         if abs(ys - is_) > 20:
             flags.append(f"panels disagree by {abs(ys - is_):.0f} points (yt {ys:.0f} vs ig {is_:.0f})")
-        secs = word_count(h["say"]) / (float(ctx.settings.get("speaking_wpm", 150)) / 60)
+        secs = word_count(dlg.clean(h["say"])) / (float(ctx.settings.get("speaking_wpm", 150)) / 60)
         too_long = secs > 3.0
         if too_long:
             flags.append(f"SAY takes ~{secs:.1f}s at {ctx.settings.get('speaking_wpm', 150)} wpm; the blueprint requires the opening line within 3 s")
         if word_count(h["write"]) > 5:
             flags.append("on-screen WRITE line is over 5 words")
-        if set(re.findall(r"[a-z]{4,}", h["write"].lower())) & set(re.findall(r"[a-z]{4,}", h["say"].lower())):
+        if set(re.findall(r"[a-z]{4,}", h["write"].lower())) & set(re.findall(r"[a-z]{4,}", dlg.clean(h["say"]).lower())):
             flags.append("WRITE repeats words from SAY (alignment rule: different words, same idea)")
         scored.append({**h, "yt": y, "ig": i, "formula_yt": y.get("formula"), "formula_ig": igf.get(key, {}).get("name"),
                        "rank_score": round(rank_score, 1), "dealbreakers": i.get("flags", []), "flags": flags,
@@ -203,7 +204,8 @@ async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int)
     revise, res, flags = None, {}, []
     for attempt in range(1, 4):
         res = await ctx.agent.run(tasks.dialogue_script(topic, hook, duration, cast, p["niche"], profile["summary"], wpm, revise), ctx)
-        res = {**res, "lines": [{"speaker": ln["speaker"], "text": ln["text"].strip()} for ln in res["lines"]]}
+        res = {**res, "lines": [{"speaker": ln["speaker"], "text": ln["text"].strip(), "timing": ln.get("timing", "normal")}
+                                for ln in res["lines"]]}
         flags = dlg.dialogue_flags(res, cast, hook["say"], duration, wpm)
         ctx.log(f"dialogue attempt {attempt}: {len(res['lines'])} lines, {len(flags)} flag(s)")
         if not flags:
@@ -214,13 +216,8 @@ async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int)
     else:
         ctx.log("flags remain after 3 attempts: shown in Studio for you to fix by re-running Script", "warn")
     lines = res["lines"]
-    # ig-human's character/slop pass, line by line (the hook line stays word for word)
-    hum = await th(tools.humanize, "\n".join(ln["text"] for ln in lines))
-    new = hum["text"].rstrip("\n").split("\n")
-    if len(new) == len(lines):
-        for k, (ln, text) in enumerate(zip(lines, new)):
-            if k and text.strip():
-                ln["text"] = text.strip()
+    # no humanize.py pass here: the lines are performed text (audio tags, stretched words, CAPS, "!!") that a
+    # character normaliser would flatten; the writer gets ig-human's rules in the prompt instead
     groups = dlg.group_lines(lines, n_clips, wpm) or dlg.group_lines(lines, n_clips, wpm, stretch=1.2)
     if groups is None:
         raise StageError(f"the dialogue does not fit {n_clips} clips of 10 s ({len(lines)} lines); re-run Script "

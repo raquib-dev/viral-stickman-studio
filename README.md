@@ -277,17 +277,26 @@ late-night desk, cut on every line, with line captions at the top and a quiet ro
 Settings → Render → Backend **local-threejs**, and run the pipeline as usual (topics → hooks → script → … →
 stitch). Differences from the narrated format:
 
-- **Hooks:** the SAY line is the first line one character says to the other.
+- **Hooks:** the SAY line is the first line one character says to the other, written as a performance:
+  `[exasperated] Claaauude!! The client said it's GREAT.` (scored on its plain words).
 - **Script:** speaker-tagged lines written to the format's rules, then checked (see below) and revised up to
   3 times; lines are grouped into the 10 s clips without ever splitting one. Studio shows them per clip with
   the turn, the callback and the button marked.
 - **Direction A/B:** not needed (no Omni prompts); they finish instantly.
-- **3D plan:** one shot per line, free and instant: the speaker's close-up (with the other character out of
-  focus behind), a wide two-shot when the same person speaks twice, on a pause beat, after 6 close-ups and for
-  the ending; faces and gestures from the words (a hand to the cheek on questions and pauses, the mascot hops
-  on "!").
-- **Render:** each line in its speaker's voice, laid out in the clip from the real voice lengths (sped up a
-  little only if needed), lip sync per speaker (the mascot has a small mouth too), hard cuts. By default the
+- **Script delivery:** every line carries its acting for ElevenLabs Eleven v4: audio tags (`[deadpan]`,
+  `[sighs]`, `[excited]`, `[whispers]`...), stretched words ("Claaauude!!"), CAPS on the word that lands, and a
+  timing: **quick** (answers straight back), **normal**, or **beat** (a sharp look first, then the answer). Tags
+  never show in captions, and engines that cannot perform them (Kokoro, Piper, Groq, older ElevenLabs models) get
+  the plain words. Studio shows the tags in grey and the timing per line.
+- **3D plan (direction):** one shot per line, free and instant, from a vocabulary: the speaker's centred
+  close-up, an off-centre close-up (rule of thirds), a shot with both characters (over the mascot's shoulder
+  onto her; a low angle on the mascot with her behind), a medium two-shot and two wides. Rules: open in the
+  speaker's face; a beat cuts to the responder early so the sharp look plays; quick answers keep both in frame;
+  the same person twice gets a new angle; both characters at least every 5 lines; never the same framing twice
+  in a row; the ending plays two-shot then wide. Faces come from the tags and the words.
+- **Render:** each line in its speaker's voice, laid out in the clip from the real voice lengths with the
+  script's timing (quick 0.06 s, normal 0.2 s, beat 0.75 s; spare time goes to the clip's start and end, never
+  into the conversation; sped up a little only if needed), lip sync per speaker (the mascot has a small mouth too), hard cuts. By default the
   characters keep still and only their faces move: expressions, blinks and the talking mouth. Settings →
   Dialogue shorts → **Character motion → Lively** adds nods, hand beats, a hand to the cheek on questions and
   the mascot's hops.
@@ -306,6 +315,10 @@ hair style and colour, skin, jacket and shirt colours, glasses, headphones, and 
 number other than 0 nudges eye spacing, jaw and head shape slightly: the same person, a little different, per
 series or per video). The mascot: shape (flower, star, blob, bean) and colour. **Preview cast** renders them
 at the desk. Changing a look or voice re-renders only the clips it affects.
+
+**Voices with ElevenLabs:** Settings → Voice → ElevenLabs. Dialogue lines always use **Eleven v4** (the top
+model, the one that performs the tags) with a drama preset (stability 0.3; Settings → Dialogue shorts → Voice
+expressiveness: lower is more emotional), whatever model your narrated videos use.
 
 **Voices:** the person uses the "female" or "male" voice, the mascot the "mascot" voice: Kokoro `am_puck` by
 default (Settings → Voice), ElevenLabs/Groq use their mascot voice when set, else the male one. Settings →

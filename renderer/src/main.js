@@ -246,6 +246,12 @@ function resolveKey(key, t) {
   const pos = base.clone().add(new THREE.Vector3(Math.sin(ang) * d, head.y + (camY - REF) * k, Math.cos(ang) * d));
   const closeLook = head.y - 0.22 * k, wideLook = head.y + (lookY - REF) * k;
   const lookAt = base.clone().setY(s.type === "closeup" ? lerp(closeLook, wideLook, cardsUp(t)) : wideLook);
+  // offset (-0.6..0.6): place the subject off-centre (rule of thirds): +0.3 puts it on the left third
+  const off = num(s.offset, -0.6, 0.6, 0);
+  if (off) {
+    const right = new THREE.Vector3().crossVectors(lookAt.clone().sub(pos), new THREE.Vector3(0, 1, 0)).normalize();
+    lookAt.addScaledVector(right, off * d * Math.tan(THREE.MathUtils.degToRad(fov) / 2) * (state.W / state.H) * 2);
+  }
   return { pos, look: lookAt, fov };
 }
 

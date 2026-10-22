@@ -186,25 +186,33 @@ def _filler(stage: str, topic: str, k: int) -> list[str]:
 
 def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: str, profile_summary: list, wpm: float,
                     revise: dict | None = None) -> dict:
-    """Dry run: a fixed exchange in the format's shape (hook first, short lines, numbers, a callback, a loop),
-    trimmed or extended to the duration. Clearly a fixture; the real one comes from the writing model."""
+    """Dry run: a fixed exchange in the format's shape (hook first, short performed lines with delivery tags,
+    varied timing, numbers, a callback, a loop), trimmed or extended to the duration. Clearly a fixture; the real
+    one comes from the writing model."""
     b = cast["b"]["name"]
-    body = [("b", "That's great!"), ("a", "I didn't build it. You did."), ("b", "I wrote four thousand lines."),
-            ("b", "You deleted three thousand."), ("a", "...They were bad."), ("a", "I just said no a lot."),
-            ("b", "Sixty-one times."), ("a", "You counted?"), ("b", "You said it very clearly."), ("a", "Anyone can say no."),
-            ("b", "I can't. I say yes."), ("a", "...That's true."), ("b", "You said no at 1 AM."), ("a", "It was the wrong blue."),
-            ("b", "Knowing that is the job."), ("a", "...Okay. It's good."), ("b", "It's great!"), ("a", f"The footer's two pixels off, {b}.")]
+    body = [("b", "[excited] That's GREAT!", "quick"), ("a", "[flatly] I didn't build it. You did.", "normal"),
+            ("b", "[proudly] I wrote four thousand lines.", "quick"), ("b", "You deleted three thousand.", "normal"),
+            ("a", "[deadpan] They were bad.", "beat"), ("a", "I just said no a lot.", "normal"),
+            ("b", "[cheerfully] Sixty-one times.", "quick"), ("a", "[sighs] You counted?", "normal"),
+            ("b", "You said it very clearly.", "normal"), ("a", "Anyone can say no.", "normal"),
+            ("b", "[nervously] I can't. I say yes.", "quick"), ("a", "...That's true.", "beat"),
+            ("b", "You said no at 1 AM.", "normal"), ("a", "[annoyed] It was the WRONG blue.", "quick"),
+            ("b", "Knowing that is the job.", "normal"), ("a", "[sighs] ...Okay. It's good.", "beat"),
+            ("b", "[excited] It's great!!", "quick"), ("a", f"[exasperated] The footer's two pixels off, {b}aaa.", "normal")]
     want = max(4, round(duration / 3.4))
-    lines = [{"speaker": "a", "text": hook["say"]}] + [{"speaker": s, "text": t} for s, t in body]
+    lines = [{"speaker": "a", "text": hook["say"], "timing": "normal"}] + [{"speaker": s, "text": t, "timing": tm} for s, t, tm in body]
     if len(lines) > want:
         lines = lines[:want - 2] + lines[-2:]
-    filler = [("a", "No."), ("b", "Again?"), ("a", "Again."), ("b", "Version nine it is.")]
+    filler = [("a", "[flatly] No.", "quick"), ("b", "Again?", "quick"), ("a", "Again.", "normal"), ("b", "[cheerfully] Version nine it is.", "normal")]
     k = 0
     while len(lines) < want:                       # longer videos: more rounds of no before the ending
-        s_, t_ = filler[k % len(filler)]
-        lines.insert(len(lines) - 2, {"speaker": s_, "text": t_})
+        s_, t_, tm_ = filler[k % len(filler)]
+        lines.insert(len(lines) - 2, {"speaker": s_, "text": t_, "timing": tm_})
         k += 1
-    title = f"{lines[-1]['text'].lower()} what's the pettiest thing you've made your ai redo?"
+    if not any(ln["timing"] == "beat" for ln in lines[1:]):
+        lines[-2]["timing"] = "beat"
+    clean_last = re.sub(r"\[[^\]]*\]\s*", "", lines[-1]["text"]).lower()
+    title = f"{clean_last} what's the pettiest thing you've made your ai redo?"
     return {**FIX, "title": title, "lines": lines, "turn": max(2, round(len(lines) * 0.75)), "button": len(lines),
             "claims_to_source": []}
 

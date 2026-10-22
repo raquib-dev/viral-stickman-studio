@@ -153,6 +153,9 @@ export default function Settings() {
           <label className="text-sm">Mascot pitch (1.0 = as spoken)<input className="input" type="number" min={0.7} max={1.5} step={0.02} value={s.dialogue.mascot_pitch} onChange={(e) => set(["dialogue", "mascot_pitch"], Number(e.target.value))} /></label>
           <label className="text-sm">Character motion<select className="input" value={s.dialogue.motion ?? "still"} onChange={(e) => set(["dialogue", "motion"], e.target.value)} data-testid="dialogue-motion">
             <option value="still">Still: only faces move (expressions, lip sync)</option><option value="lively">Lively: nods, hand beats, gestures, hops</option></select></label>
+          <label className="text-sm">ElevenLabs model for dialogue<select className="input" value={s.dialogue.elevenlabs_model ?? "eleven_v4"} onChange={(e) => set(["dialogue", "elevenlabs_model"], e.target.value)}>
+            <option value="eleven_v4">Eleven v4 (best: performs the script's [tags])</option><option value="eleven_v3">Eleven v3</option></select></label>
+          <label className="text-sm">Voice expressiveness (ElevenLabs stability: lower = more emotional)<input className="input" type="number" min={0} max={1} step={0.05} value={s.dialogue.elevenlabs_stability ?? 0.3} onChange={(e) => set(["dialogue", "elevenlabs_stability"], Number(e.target.value))} /></label>
           <label className="text-sm">Close-up background blur<input className="input" type="number" min={0} max={0.08} step={0.005} value={s.dialogue.dof} onChange={(e) => set(["dialogue", "dof"], Number(e.target.value))} /></label>
           <p className="text-xs text-ink-3 md:col-span-4">Mascot voice per engine: Kokoro above; ElevenLabs/Groq use their "mascot" voice when set, else the male voice. The bed dips while anyone speaks.</p>
         </div>
@@ -209,7 +212,7 @@ function ElevenLabsVoice({ s, set }: { s: any; set: (path: string[], v: any) => 
     <div className="grid gap-3 rounded-lg border border-line p-3 md:col-span-3 md:grid-cols-3" data-testid="elevenlabs-settings">
       <label className="text-sm">ElevenLabs voice (male / female)<span className="flex gap-1">{field("elevenlabs_voice_male")}{field("elevenlabs_voice_female")}</span></label>
       <label className="text-sm">Model<select className="input" value={s.voice.elevenlabs_model} onChange={(e) => set(["voice", "elevenlabs_model"], e.target.value)}>
-        {[["eleven_multilingual_v2", "Multilingual v2 (best quality)"], ["eleven_turbo_v2_5", "Turbo v2.5 (faster, cheaper)"], ["eleven_flash_v2_5", "Flash v2.5 (fastest, cheapest)"], ["eleven_v3", "v3 (most expressive)"]]
+        {[["eleven_v4", "Eleven v4 (best: emotion, performs [audio tags])"], ["eleven_multilingual_v2", "Multilingual v2"], ["eleven_turbo_v2_5", "Turbo v2.5 (faster, cheaper)"], ["eleven_flash_v2_5", "Flash v2.5 (fastest, cheapest)"], ["eleven_v3", "v3 (expressive, older)"]]
           .map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
       <div className="flex items-end"><button className="btn" type="button" onClick={load} data-testid="elevenlabs-load">Load my voices</button></div>
       {slider("elevenlabs_stability", "Stability")}{slider("elevenlabs_similarity", "Similarity")}{slider("elevenlabs_style", "Style exaggeration")}

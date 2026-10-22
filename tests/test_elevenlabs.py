@@ -45,7 +45,7 @@ def test_elevenlabs_writes_a_wav_and_never_logs_the_key(key, mp3, tmp_path, monk
     assert len(seen) == 2 and r.url.path == "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"   # female default (Rachel)
     assert r.headers["xi-api-key"] == KEY and r.url.params["output_format"] == "mp3_44100_128"
     body = json.loads(r.content)
-    assert body["text"] == "Hello there." and body["model_id"] == "eleven_multilingual_v2"
+    assert body["text"] == "Hello there." and body["model_id"] == "eleven_v4"           # the top model by default
     assert "12 characters" in " ".join(logs) and KEY not in " ".join(logs)
     assert not list(tmp_path.glob("*.mp3"))
 

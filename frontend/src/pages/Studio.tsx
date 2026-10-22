@@ -88,7 +88,9 @@ function DialogueScript({ s }: { s: any }) {
             <div className="mt-1 grid gap-0.5">{c.lines.map((ln: any) => (
               <div key={ln.i} className="flex flex-wrap items-baseline gap-2 text-sm">
                 <span className="w-20 shrink-0 font-semibold" style={{ color: ln.speaker === "a" ? "var(--accent)" : "var(--good)" }}>{names[ln.speaker]}</span>
-                <span className="text-ink">{ln.text}</span>
+                <span className="text-ink">{String(ln.text).split(/(\[[^\]]+\])/).map((part: string, j: number) =>
+                  part.startsWith("[") ? <span key={j} className="text-xs italic text-ink-3">{part} </span> : <span key={j}>{part}</span>)}</span>
+                {ln.timing && ln.timing !== "normal" && <span className="chip !py-0 text-[10px]" title={ln.timing === "beat" ? "a sharp look before answering" : "answers straight back"}>{ln.timing}</span>}
                 {marks(ln.i).map((m) => <span key={m} className="chip !py-0 text-[10px]">{m}</span>)}
               </div>))}</div>
           </div>))}

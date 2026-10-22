@@ -87,7 +87,9 @@ DEFAULTS: dict[str, Any] = {
     # audio file; bed_db = its level under the voices; mascot_pitch raises the mascot's voice (1.0 = as the engine
     # speaks it); dof = depth-of-field strength of the close-ups; motion "still" = the characters keep still and only
     # their faces move (expressions, blinks, lip sync), "lively" = nods, hand beats, gestures, the mascot hops
-    "dialogue": {"bed": "room", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.035, "motion": "still"},
+    # ElevenLabs for dialogue lines: the most expressive model (performs the script's audio tags) with a drama preset
+    "dialogue": {"bed": "room", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.035, "motion": "still",
+                 "elevenlabs_model": "eleven_v4", "elevenlabs_stability": 0.3, "elevenlabs_similarity": 0.8},
     "agent": {
         # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
         # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
@@ -129,7 +131,7 @@ DEFAULTS: dict[str, Any] = {
               "piper_model": "", "max_speedup": 1.3,
               # ElevenLabs (cloud): voice IDs from your account (defaults: premade "Adam" and "Rachel")
               "elevenlabs_voice_male": "pNInz6obpgDQGcFmaJgB", "elevenlabs_voice_female": "21m00Tcm4TlvDq8ikWAM",
-              "elevenlabs_model": "eleven_multilingual_v2", "elevenlabs_stability": 0.5, "elevenlabs_similarity": 0.75,
+              "elevenlabs_model": "eleven_v4", "elevenlabs_stability": 0.5, "elevenlabs_similarity": 0.75,
               "elevenlabs_style": 0.0,
               # Groq text-to-speech (GROQ_API_KEY): model and voice names from the Groq console's speech docs
               "groq_tts_model": "canopylabs/orpheus-v1-english", "groq_voice_male": "troy", "groq_voice_female": "hannah",

@@ -291,12 +291,18 @@ async def render(ctx) -> dict:
         ctx.log(f"dry run is on: using the mock backend instead of {r['backend']}", "warn")
     specs = _clip_specs(ctx, p)
     if not ctx.dry_run:
-        from .studio import placeholders
+        from .studio import placeholders, rewrite_gaps
         gaps = placeholders([{"index": sp.index, "vo": sp.vo} for sp in specs])
+        if gaps and ctx.settings.get("script_gaps", "ask") == "rewrite":
+            ctx.log("the script has gaps; rewriting those lines without a figure (Settings → Script gaps)")
+            ctx.write_json("script/script.json", await rewrite_gaps(ctx, ctx.read_json("script/script.json")))
+            specs = _clip_specs(ctx, p)
+            gaps = placeholders([{"index": sp.index, "vo": sp.vo} for sp in specs])
         if gaps:
             raise StageError("the script still has gaps for you to fill: " + ", ".join(
                 f"{{{{{g['name']}}}}} (clip {', '.join(map(str, g['clips']))})" for g in gaps)
-                + ". Fill them in Studio → Script (the voice would read them out otherwise).")
+                + ". Type your value in the box at the top of the Render page (or Studio → Script), or press "
+                "Rewrite without the number. Settings → Script gaps → rewrite automatically skips this stop.")
     only = set(ctx.params.get("only") or [])
     force = bool(ctx.params.get("force"))
     todo = []

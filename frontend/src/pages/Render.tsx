@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { GatePanel } from "../components/GatePanel";
 import { RunStageButton } from "../components/Pipeline";
+import { ScriptGaps } from "../components/ScriptGaps";
 import { Empty, ErrorBox, Note, Section, StatusChip, fmtDur, fmtUsd } from "../components/ui";
 import { api, fileUrl, getFile } from "../lib/api";
 import { useNow, useProject, useProjectFile } from "../lib/useProject";
@@ -38,6 +39,7 @@ export default function Render() {
               try { await api.post(`/projects/${slug}/stages/render/run`, { params: { force: true } }); } catch (e: any) { setErr(e.message); } }}>↻ Re-render all</button>
           <RunStageButton stage="stitch" /></span>
       </div>
+      <ScriptGaps />
       <Section title="Cost">
         <div className="grid gap-3 md:grid-cols-4" data-testid="cost-meter">
           <Stat label="Backend" value={settings?.dry_run ? "mock (dry run)" : r?.backend} />

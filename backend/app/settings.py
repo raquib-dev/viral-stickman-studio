@@ -80,6 +80,9 @@ def ffprobe_bin() -> str:
 
 # Defaults for keys added after a settings.json was written, so older files keep working unchanged.
 DEFAULTS: dict[str, Any] = {
+    # a script line needing a figure only you know ({{your number}}): "ask" = stop and show a Fill in box,
+    # "rewrite" = have the writing model rephrase the line without a figure (a number is never invented)
+    "script_gaps": "ask",
     "agent": {
         # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
         # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
@@ -160,6 +163,8 @@ def validate_settings(s: dict[str, Any]) -> None:
         raise ValueError("Groq URL must start with https://")
     if s["voice"]["tts"] not in TTS_ENGINES:
         raise ValueError("unknown TTS engine")
+    if s.get("script_gaps", "ask") not in ("ask", "rewrite"):
+        raise ValueError("script gaps must be ask or rewrite")
     if s["captions"].get("engine", "local") not in ("local", "groq"):
         raise ValueError("caption engine must be local or groq")
     if not 1 <= int(s["agent"]["max_attempts"]) <= 6:

@@ -98,6 +98,8 @@ export default function Settings() {
             <option value="claude">Claude API (best quality)</option><option value="hybrid">Hybrid: Claude directs, local writes the rest</option><option value="local">Local LLM only ($0)</option><option value="hybrid-groq">Hybrid: Claude directs, Groq writes the rest</option><option value="groq">Groq only (hosted, fast)</option></select></label>
           <div className="flex items-end"><button className="btn" type="button" data-testid="use-groq-everywhere" title="Writing, voiceover and caption timing all on Groq (GROQ_API_KEY). Save to keep it."
             onClick={() => { set(["agent", "provider"], "groq"); set(["voice", "tts"], "groq"); set(["captions", "engine"], "groq"); }}>Use Groq for everything</button></div>
+          <label className="text-sm">Script gaps ({"{{your number}}"}: a figure only you know)<select className="input" value={s.script_gaps ?? "ask"} onChange={(e) => set(["script_gaps"], e.target.value)} data-testid="script-gaps-mode">
+            <option value="ask">Ask me (stop and show a Fill in box)</option><option value="rewrite">Rewrite the line without a number, automatically</option></select></label>
           <label className="text-sm">Attempts per task (invalid answers are retried)<input className="input" type="number" min={1} max={6} value={s.agent.max_attempts} onChange={(e) => set(["agent", "max_attempts"], Number(e.target.value))} /></label>
         </div>
         {s.agent.provider.endsWith("groq") && <GroqSettings s={s} set={set} />}

@@ -96,6 +96,71 @@ def fill_placeholders(script: dict, values: dict[str, str]) -> dict:
     return script
 
 
+_DIGITS = re.compile(r"\d[\d,.]*")
+
+
+def _gap_problems(old: str, new: str, clip_no: int, hook_say: str) -> list[str]:
+    nums = lambda t: {m.group(0).rstrip(".,") for m in _DIGITS.finditer(PLACEHOLDER.sub("", t))}  # noqa: E731
+    probs = []
+    if PLACEHOLDER.search(new) or "{{" in new or "}}" in new:
+        probs.append(f"clip {clip_no} still has a gap")
+    extra = nums(new) - nums(old)
+    if extra:
+        probs.append(f"clip {clip_no} added numbers {sorted(extra)} (never invent figures)")
+    wc = word_count(new)
+    if not MIN_WORDS <= wc <= MAX_WORDS + 2:
+        probs.append(f"clip {clip_no} has {wc} words (keep {MIN_WORDS}-{MAX_WORDS})")
+    if clip_no == 1 and hook_say and not new.startswith(hook_say.strip()[:30]):
+        probs.append("clip 1 must still start with the hook")
+    return probs
+
+
+async def rewrite_gaps(ctx, script: dict) -> dict:
+    """Have the writing model rephrase every line that still has a {{...}} gap so it needs no figure, check the
+    result (no gaps, no new numbers, word budget, hook kept), retry once, and return the updated script."""
+    gaps = placeholders(script["clips"])
+    if not gaps:
+        return script
+    todo = [{"clip": c["index"] + 1, "vo": c["vo"]} for c in script["clips"] if PLACEHOLDER.search(c["vo"])]
+    hook_say = (script.get("hook") or {}).get("say", "")
+    feedback = ""
+    for attempt in (1, 2):
+        res = await ctx.agent.run(tasks.fill_gaps(todo, hook_say, feedback), ctx)
+        got = {int(x["clip"]): x["vo"].strip() for x in res["lines"]}
+        probs = [f"clip {t['clip']} missing from the answer" for t in todo if t["clip"] not in got]
+        for t in todo:
+            if t["clip"] in got:
+                probs += _gap_problems(t["vo"], got[t["clip"]], t["clip"], hook_say)
+        if not probs:
+            break
+        feedback = "; ".join(probs)
+        ctx.log(f"gap rewrite attempt {attempt} rejected: {feedback}", "warn")
+    else:
+        raise StageError("could not rewrite the script's gaps without a figure (" + feedback + "). "
+                         "Fill them in yourself in Studio → Script or on the Render page.")
+    for c in script["clips"]:
+        n = c["index"] + 1
+        if n in got:
+            ctx.log(f"clip {n}: \u201c{c['vo']}\u201d -> \u201c{got[n]}\u201d")
+            c["vo"] = got[n]
+    script["placeholders"] = placeholders(script["clips"])
+    script.setdefault("gap_rewrites", []).append({"at": time.time(), "clips": sorted(got)})
+    return script
+
+
+@stage("script_gaps", "Rewrite script gaps",
+       description="Rephrase narration lines that hold a {{...}} gap so they need no figure (never invents one).",
+       skills=["ig-human"])
+async def script_gaps(ctx) -> dict:
+    script = ctx.read_json("script/script.json")
+    if not placeholders(script["clips"]):
+        ctx.log("the script has no gaps to rewrite")
+        return {"outputs": ["script/script.json"]}
+    ctx.write_json("script/script.json", await rewrite_gaps(ctx, script))
+    ctx.log("gaps rewritten: re-plan and re-render the clips that changed (Render page)")
+    return {"outputs": ["script/script.json"]}
+
+
 def _script_flags(clips: list[dict], beats_report: dict, hook_say: str, duration: int) -> list[str]:
     flags = []
     for r in beats_report["beats"]:
@@ -174,9 +239,11 @@ async def script(ctx) -> dict:
     final_flags = _script_flags(clips, final_report, hook["say"], duration)
     data = {**res, "clips": clips, "hook": hook, "topic": topic, "duration": duration, "format": fmt, "wpm": wpm,
             "flags": final_flags, "plan": plan, "placeholders": placeholders(clips)}
+    if data["placeholders"] and ctx.settings.get("script_gaps", "ask") == "rewrite":
+        data = await rewrite_gaps(ctx, data)
     for ph in data["placeholders"]:
-        ctx.log(f"fill in {{{{{ph['name']}}}}} (clip {', '.join(map(str, ph['clips']))}) in Studio → Script before rendering: "
-                "the app never invents a number", "warn")
+        ctx.log(f"fill in {{{{{ph['name']}}}}} (clip {', '.join(map(str, ph['clips']))}) in Studio → Script or on the Render page "
+                "before rendering, or press Rewrite without the number: the app never invents a figure", "warn")
     ctx.write_json("script/script.json", data)
     ctx.write_json("script/beats.json", final_report)
     ctx.write_json("script/human.json", {"humanize_report": hum["report"], "detect_before": before, "detect_after": after})

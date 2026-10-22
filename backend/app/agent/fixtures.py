@@ -223,6 +223,16 @@ def _loop_word(say: str) -> str:
     return max(cands, key=len) if cands else words[-1]
 
 
+def fill_gaps(lines: list, hook_say: str, feedback: str = "") -> dict:
+    """Dry run: drop the gap and its leading preposition-free phrase in a deterministic, readable way."""
+    import re
+    out = []
+    for ln in lines:
+        vo = re.sub(r"\s*\{\{[^{}]*\}\}", " more than you think", ln["vo"])
+        out.append({"clip": ln["clip"], "vo": re.sub(r"\s+", " ", vo).replace(" .", ".").strip()})
+    return {**FIX, "lines": out}
+
+
 def structural_rewrite(text: str, flags: list) -> dict:
     return {**FIX, "text": text}
 

@@ -115,3 +115,106 @@ def test_renderer_reports_frame_qa(tmp_path):
     assert 15 < qa["mean_luma"] < 200
     lines = tj.qa_lines(qa, 1)
     assert lines and all(level == "info" for _, level in lines)
+
+
+# ---- script gaps: rewrite without a figure ----
+
+class _Ctx:
+    def __init__(self, agent):
+        self.agent, self.lines = agent, []
+
+    def log(self, text, level="info"):
+        self.lines.append((level, text))
+
+
+class _Writer:
+    def __init__(self, *answers):
+        self.answers, self.calls = list(answers), []
+
+    async def run(self, task, ctx):
+        self.calls.append(task)
+        return {"lines": self.answers.pop(0)}
+
+
+HOOK = "You don't have a money problem."
+GAP_SCRIPT = {"hook": {"say": HOOK}, "clips": [
+    {"index": 0, "vo": HOOK + " Every replay costs you {{your number}}. Same pit, every Friday night again."},
+    {"index": 1, "vo": "Keep the trigger, keep the reward, and just swap the button you press next time."},
+    {"index": 2, "vo": "Stress hits, and you move {{your number}} into savings instead of takeout again."}]}
+
+
+async def test_gap_rewrite_is_checked_then_applied():
+    import copy
+
+    from backend.app.stages.studio import rewrite_gaps
+    bad = [{"clip": 1, "vo": HOOK + " Every replay costs you $40. Same pit, every Friday night again."},   # invents a figure
+           {"clip": 3, "vo": "Stress hits, and you move {{your number}} into savings instead."}]           # gap kept
+    good = [{"clip": 1, "vo": HOOK + " Every replay costs you more than you think. Same pit, every Friday night."},
+            {"clip": 3, "vo": "Stress hits, and you move a slice of that money into savings instead of takeout."}]
+    w = _Writer(bad, good)
+    ctx = _Ctx(w)
+    out = await rewrite_gaps(ctx, copy.deepcopy(GAP_SCRIPT))
+    assert len(w.calls) == 2 and "invent" in w.calls[1].prompt.lower() and "$40" not in out["clips"][0]["vo"]
+    assert "added numbers" in w.calls[1].context["feedback"] and "still has a gap" in w.calls[1].context["feedback"]
+    assert out["placeholders"] == [] and out["clips"][1]["vo"] == GAP_SCRIPT["clips"][1]["vo"]   # untouched line kept
+    assert out["clips"][0]["vo"].startswith(HOOK)
+
+
+async def test_gap_rewrite_gives_up_clearly():
+    import copy
+
+    from backend.app.jobs import StageError
+    from backend.app.stages.studio import rewrite_gaps
+    lost_hook = [{"clip": 1, "vo": "Every replay costs you more than you think. Same pit, every Friday night, again and again."},
+                 {"clip": 3, "vo": "Stress hits, and you move a slice of that money into savings instead of takeout."}]
+    with pytest.raises(StageError, match="Fill them in yourself"):
+        await rewrite_gaps(_Ctx(_Writer(lost_hook, lost_hook)), copy.deepcopy(GAP_SCRIPT))
+
+
+def test_dry_run_fixture_for_gaps_is_valid():
+    from backend.app.agent import fixtures, tasks
+    from backend.app.agent.runner import _validate
+    t = tasks.fill_gaps([{"clip": 3, "vo": GAP_SCRIPT["clips"][2]["vo"]}], HOOK)
+    data = fixtures.fill_gaps(**t.context)
+    _validate(t, data)
+    assert "{{" not in data["lines"][0]["vo"]
+
+
+async def test_render_stops_or_rewrites_by_setting(monkeypatch):
+    import json as _json
+
+    from backend.app import db, jobs, paths
+    from backend.app.agent import runner
+    from backend.app.jobs import manager
+    slug = "gaps-render"
+    db.upsert_project(slug, slug, {"name": slug, "niche": "x", "ratio": "9:16", "duration": 30, "platforms": ["shorts"],
+                                   "theme": "dark", "style": "4"})
+    root = paths.ensure_project_dirs(slug)
+    for rel, obj in {"direction/phase-b.json": {"checks": [], "prompts": [{"text": "p"}] * 3},
+                     "direction/phase-a.json": {"rows": [{"clip": k, "purpose": "beat"} for k in (1, 2, 3)]},
+                     "script/script.json": GAP_SCRIPT}.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(_json.dumps(obj))
+    real = jobs.load_settings
+    mode = {"v": "ask"}
+
+    def s():
+        x = real()
+        x["dry_run"] = False
+        x["script_gaps"] = mode["v"]
+        x["render"] = {**x["render"], "backend": "local-stickman"}
+        return x
+    monkeypatch.setattr(jobs, "load_settings", s)
+    good = [{"clip": 1, "vo": HOOK + " Every replay costs you more than you think. Same pit, every Friday night."},
+            {"clip": 3, "vo": "Stress hits, and you move a slice of that money into savings instead of takeout."}]
+    monkeypatch.setattr(runner, "get_agent", lambda settings: _Writer(good))
+    await manager.start()
+    jid, fut = manager.submit(slug, "render", {"only": [99]})
+    assert await fut == "failed"
+    assert "Rewrite without the number" in (db.get_job(jid)["error"] or "")
+    mode["v"] = "rewrite"
+    jid, fut = manager.submit(slug, "render", {"only": [99]})          # clip 99 does not exist: only the gap step runs
+    await fut
+    await manager.stop()
+    after = _json.loads((root / "script/script.json").read_text())
+    assert "{{" not in _json.dumps(after["clips"]) and after["placeholders"] == []

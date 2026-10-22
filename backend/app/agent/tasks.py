@@ -173,6 +173,28 @@ TEXT:
                      {"text": text, "flags": flags})
 
 
+def fill_gaps(lines: list[dict], hook_say: str, feedback: str = "") -> AgentTask:
+    """Rewrite narration lines that hold a {{...}} gap (a figure only the creator knows and did not give) so
+    they read naturally without it. Never fills in a number."""
+    prompt = f"""Use the `ig-human` skill's voice rules. Each narration line below contains a gap such as
+{{{{your number}}}}: a figure only the creator knows, which they have not given. Rewrite ONLY these lines so they
+read naturally WITHOUT that figure.
+
+Rules:
+- No {{{{...}}}} gaps left. Do not add any number, amount, percentage, date or statistic that is not already in
+  the line, and do not invent facts. Say it in words that need no figure ("costs you more than you think",
+  "a slice of every payday").
+- Keep the meaning, the second person, contractions and short sentences. Keep each line between 12 and 25 words
+  and within 3 words of its current length.
+- If clip 1 is listed, it must still start with the hook exactly: "{hook_say}".
+- Return every listed clip, with its clip number.
+{('PREVIOUS ATTEMPT WAS REJECTED: ' + feedback) if feedback else ''}
+LINES:
+{_j(lines)}"""
+    return AgentTask("fill_gaps", prompt, _obj({"lines": _arr(_obj({"clip": INT, "vo": STR}, ["clip", "vo"]), 1)}),
+                     ["ig-human"], "labeling", {"lines": lines, "hook_say": hook_say, "feedback": feedback})
+
+
 # ---- direction ------------------------------------------------------------------------------
 
 def phase_a(title: str, clips: list[dict], ratio: str, duration: int, style: str, theme: str,

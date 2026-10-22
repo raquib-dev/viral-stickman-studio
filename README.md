@@ -400,8 +400,8 @@ cd frontend; npm run build; cd ..      # UI: Fill in box for script gaps
 
 Then restart the app and, for a project you already rendered:
 
-1. Studio → Script: if a **Fill in before rendering** box shows (e.g. `{{your number}}`), type your real value
-   and press **Fill in**.
+1. Render page (top) or Studio → Script: if a box says the script needs a number only you know (e.g.
+   `{{your number}}`), type your real value and press **Fill in**, or press **✦ Rewrite without the number**.
 2. Render → **Re-plan** the clips (optional: plans saved before this version are repaired at render time
    anyway: no fades between clips, no placeholder badges) and **Regenerate** every clip, then run **Stitch**.
 3. Read the `QA` lines in the Activity log or `final/qa.json`.
@@ -436,9 +436,12 @@ faster-whisper or the estimate. Check the speech model and voice names in the Gr
 - **Caption timing** on real renders is word-accurate only with `faster-whisper` installed. Otherwise
   each clip's narration is spread across the stretch where its voice actually plays (local backends record
   it), or across the 10 s window for Omni clips.
-- **Script gaps.** When the script needs a figure only you know it writes `{{your number}}`. Studio → Script
-  shows a **Fill in before rendering** box; a real render stops until every gap is filled (the voice would
-  read it out otherwise), and the app never invents the number.
+- **Script gaps.** When the script needs a figure only you know it writes `{{your number}}`. A box at the top
+  of the Render page (and in Studio → Script) lists them: type your value and press **Fill in**, or press
+  **✦ Rewrite without the number** and the writing model rephrases those lines so they need none (checked: no
+  gap left, no new numbers, hook kept). A real render stops until one of the two is done. Settings → Writing
+  model → **Script gaps → rewrite automatically** does the rewrite by itself, so renders never stop there. The
+  app never invents the number.
 - **Rates change.** Omni pricing and limits were checked on 21 Oct 2026 (the preview model ID
   `gemini-omni-flash-preview` shut down on 22 Oct 2026; the app uses `gemini-omni-1.1-flash`).
 - **Platform policy.** Stick-figure explainers made in a pipeline must show your own insight, and

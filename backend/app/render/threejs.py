@@ -304,7 +304,7 @@ class ThreeJSBackend:
         override = out.parent.parent / "scenes" / f"clip-{clip.index + 1:02d}.json"
         if override.exists():
             scene = json.loads(override.read_text(encoding="utf-8"))
-            log(f"clip {clip.index + 1}: scene plan from scenes/{override.name}")
+            log(f"clip {clip.index + 1}: scene plan from scenes/{override.name} ({scene.get('_planned_by', 'your file')})")
         else:
             scene = auto_scene(clip, self.cfg, talk)
         w, h = dims(clip.ratio, clip.resolution)
@@ -337,7 +337,8 @@ class ThreeJSBackend:
             f.unlink(missing_ok=True)
         lf = await asyncio.to_thread(last_frame, out, out.with_suffix(".last.png"))
         return ClipResult(clip.index, out, clip.duration, 0.0, self.name, last_frame=lf,
-                          meta={"scene": scene_path.name, "voice": bool(speech), "planned_by": "file" if override.exists() else "keywords",
+                          meta={"scene": scene_path.name, "voice": bool(speech),
+                                "planned_by": scene.get("_planned_by", "your file") if override.exists() else "keywords",
                                 **fit})
 
     async def _render(self, scene_path: Path, out: Path, clip: ClipSpec, log: Log) -> None:
@@ -375,3 +376,127 @@ class ThreeJSBackend:
             raise RenderError(f"three.js renderer failed: {(error or err.strip()[-400:] or f'exit {proc.returncode}')[:500]}",
                               retryable=False)
         log(f"clip {clip.index + 1}: rendered in {time.time() - t0:.0f}s")
+
+
+# ---- checking and repairing a scene plan written by an AI -----------------------------------------
+
+LIMITS = {"actors": 2, "props": 3, "panels": 2, "badges": 2}
+DIGITS = re.compile(r"\d[\d,.]*")
+
+
+def _nums(text: str) -> set[str]:
+    return {m.group(0).replace(",", "").rstrip(".") for m in DIGITS.finditer(text or "")}
+
+
+def check_and_repair(scene: dict, vo: str, duration: float, vertical: bool = True) -> tuple[dict, list[str], list[str]]:
+    """Make an AI-written plan safe to render. Unknown names fall back to safe defaults, times and positions
+    are clamped into the clip and the frame, clutter is trimmed, and on-screen numbers the voiceover does not
+    say are removed (never invent a statistic). Returns (scene, fixes made, errors that remain)."""
+    C, fixes = CATALOG, []
+    s = json.loads(json.dumps(scene))
+    T = lambda v: round(min(max(float(v or 0), 0.0), duration), 2)  # noqa: E731
+    xr = 1.2 if vertical else 2.2
+    clampv = lambda v, lo, hi: [round(min(max(float(v[0]), lo[0]), hi[0]), 2), round(min(max(float(v[1]), lo[1]), hi[1]), 2),  # noqa: E731
+                                round(min(max(float(v[2]), lo[2]), hi[2]), 2)] if isinstance(v, list) and len(v) == 3 else None
+    if s.get("style") not in C["styles"] and s.get("style") not in C["skill_styles"]:
+        fixes.append(f"style {s.get('style')!r} -> minimal"); s["style"] = "minimal"
+    moods = s.get("mood") or [{"t": 0, "mood": "neutral"}]
+    moods = [{"t": 0, "mood": moods}] if isinstance(moods, str) else moods
+    for m in moods:
+        if m.get("mood") not in C["moods"]:
+            fixes.append(f"mood {m.get('mood')!r} -> neutral"); m["mood"] = "neutral"
+        m["t"] = T(m.get("t"))
+    s["mood"] = sorted(moods, key=lambda m: m["t"])
+    for key, n in LIMITS.items():
+        if len(s.get(key) or []) > n:
+            fixes.append(f"kept {n} of {len(s[key])} {key}"); s[key] = s[key][:n]
+    actors = s.get("actors") or []
+    if not actors:
+        fixes.append("added the hero"); actors = [{"id": "hero"}]
+    actors[0].setdefault("id", "hero")
+    prop_ids = []
+    for i, p in enumerate(s.get("props") or []):
+        p.setdefault("id", f"p{i + 1}")
+        prop_ids.append(p["id"])
+    ids = {a.get("id") for a in actors} | set(prop_ids) | {"camera"}
+    for a in actors:
+        for k in a.get("anim", []):
+            if k.get("clip") not in C["clips"]:
+                fixes.append(f"clip {k.get('clip')!r} -> Idle"); k["clip"] = "Idle"
+            k["t"] = T(k.get("t"))
+        for k in a.get("face", []):
+            if k.get("expr") not in C["expressions"]:
+                fixes.append(f"expression {k.get('expr')!r} -> neutral"); k["expr"] = "neutral"
+            k["t"] = T(k.get("t"))
+        kept = []
+        for g in a.get("gestures", []):
+            if g.get("gesture") not in C["gestures"]:
+                fixes.append(f"dropped gesture {g.get('gesture')!r}"); continue
+            if isinstance(g.get("target"), str) and g["target"] not in ids:
+                fixes.append(f"gesture target {g['target']!r} removed"); g.pop("target")
+            g["t"] = T(g.get("t")); g["dur"] = round(min(max(float(g.get("dur", 1.8)), 0.6), duration - g["t"] + 0.5), 2)
+            kept.append(g)
+        a["gestures"] = kept
+        look = []
+        for k in a.get("look", []):
+            at = k.get("at")
+            if isinstance(at, str) and at not in ids and at not in ("left", "right", "up", "down", "none"):
+                fixes.append(f"look target {at!r} -> camera"); k["at"] = "camera"
+            k["t"] = T(k.get("t")); look.append(k)
+        if look:
+            a["look"] = look
+        if a.get("hat", "none") not in C["hats"]:
+            fixes.append(f"hat {a.get('hat')!r} removed"); a.pop("hat")
+        if a.get("position") is not None:
+            a["position"] = clampv(a["position"], [-xr, 0, -2], [xr, 0, 1]) or [0, 0, 0]
+        for k in a.get("path", []):
+            pos = k.get("pos", [0, 0, 0])
+            k["pos"] = clampv(pos if len(pos) == 3 else [pos[0], 0, pos[1]], [-2.5, 0, -2], [2.5, 0, 1]); k["t"] = T(k.get("t"))
+        for key in ("anim", "face", "gestures", "path"):
+            if a.get(key):
+                a[key] = sorted(a[key], key=lambda k: k["t"])
+    s["actors"] = actors
+    props = []
+    for p in s.get("props") or []:
+        if p.get("type") not in C["props"]:
+            fixes.append(f"dropped prop {p.get('type')!r}"); continue
+        if p.get("pos") is not None:
+            p["pos"] = clampv(p["pos"], [-xr, 0, -2.5], [xr, 2.4, 1.2])
+        if p.get("hold") and p["hold"].get("actor") not in ids:
+            p["hold"]["actor"] = actors[0]["id"]
+        p["t_in"] = T(p.get("t_in"))
+        props.append(p)
+    s["props"] = props
+    said = _nums(vo)
+    for key in ("badges", "panels"):
+        kept = []
+        for el in s.get(key) or []:
+            el["t_in"] = T(el.get("t_in"))
+            if el.get("pos") is not None:
+                el["pos"] = clampv(el["pos"], [-xr, 0.3, -3], [xr, 2.8, 0.5])
+            code = key == "panels" and (el.get("kind") == "code" or re.search(r"\.\w+$", el.get("title", "")))
+            texts = [el.get("text", ""), el.get("title", "")] + ([] if code else el.get("lines", []))
+            bad = sorted(set().union(*(_nums(x) for x in texts)) - said)
+            if bad:
+                fixes.append(f"removed a {key[:-1]} showing {', '.join(bad)} (not said in the voiceover)"); continue
+            kept.append(el)
+        s[key] = kept
+    cams = []
+    for k in s.get("camera") or []:
+        shot = k.get("shot")
+        kind = shot if isinstance(shot, str) else (shot or {}).get("type")
+        if shot and kind not in C["shots"]:
+            fixes.append(f"shot {kind!r} -> medium")
+            k["shot"] = {**(shot if isinstance(shot, dict) else {}), "type": "medium"}
+        if not shot and not (k.get("pos") and k.get("look")):
+            k["shot"] = "medium"
+        k["t"] = T(k.get("t")); cams.append(k)
+    if not cams:
+        fixes.append("added a medium shot"); cams = [{"t": 0, "shot": {"type": "medium", "target": actors[0]["id"]}}]
+    s["camera"] = sorted(cams, key=lambda k: k["t"])
+    tr = s.get("transition") or {}
+    for side in ("in", "out"):
+        if tr.get(side, "none") not in C["transitions"]:
+            fixes.append(f"transition {tr[side]!r} -> none"); tr[side] = "none"
+    s["transition"] = tr
+    return s, fixes, validate_scene(s)

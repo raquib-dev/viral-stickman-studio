@@ -276,3 +276,49 @@ DURATION: {duration}s"""
     schema = _obj({"biggest_leak": STR, "change": STR, "ig_findings": _arr(STR), "adjustments": _arr(adj)})
     return AgentTask("learn_read", prompt, schema, ["yt-retention", "ig-audit"], "research",
                      {"retention": retention, "ig_insights": ig_insights, "plan": plan, "duration": duration})
+
+
+# ---- 3D scene planning (local-threejs renderer) ------------------------------------------------
+
+def scene_plan(clip: int, count: int, row: dict, vo: str, style: str, theme: str, ratio: str, duration: float,
+               talk: list, catalog: dict, draft: dict, feedback: str = "") -> AgentTask:
+    lists = {k: catalog[k] for k in ("moods", "clips", "expressions", "gestures", "props", "hats", "shots", "transitions")}
+    vertical = ratio == "9:16"
+    prompt = f"""Following the director's approved Phase A intent (one clear action per beat, continuity between
+clips), stage clip {clip} of {count} as a 3D scene for the app's three.js renderer: a low-poly 3D stickman in
+style "{style}" ({theme}), {ratio}, {duration:.0f} s. You are writing DATA for a renderer, not code, not a video prompt.
+
+THE BEAT (approved Phase A row): {_j(row)}
+VOICEOVER (spoken {talk[0]:.1f}-{talk[1]:.1f} s): "{vo}"
+
+Improve the DRAFT below (a keyword planner's guess) so the scene shows what this line means:
+- mood: the colour of the beat from what it says; if the line turns ("but...", "until..."), add a second mood at
+  the second where the turn is spoken (inside the voiceover window).
+- 1-3 gestures timed to the words they illustrate; a facial expression arc; optional clip ("anim") moments.
+- at most 2 props that are concrete things the line mentions or implies; a prop can be held (hold) or placed (pos).
+- optional: one "note" panel (title + up to 3 lines of max 28 characters, using the voiceover's own words) or, for
+  software topics only, one "code" panel (title is a file name, up to 3 short lines of plausible code).
+- a badge only if the voiceover says a number; its text must use that exact number.
+- camera: 2-4 keys using named shots that serve the beat (reveal wide, punch in on the payoff).
+- a second actor (id "other") only if the line is about another person; then use a two_shot.
+Frame layout ({'vertical 9:16' if vertical else 'wide 16:9'}, metres, the hero stands at x=0, z=0, faces +z):
+  props beside the hero x={'±0.5..0.65' if vertical else '±0.8..1.2'}, on the floor y=0 or at chest height y=1.1-1.5, z=-0.3..0.3;
+  panels y=1.9-2.4, z=-0.5..-1.5, width <= {'1.5' if vertical else '2.2'}; badges y about 2.15, z -0.4.
+Times are seconds inside 0-{duration:.0f}. Use ONLY these names: {_j(lists)}
+Never invent a statistic: no number may appear on screen unless the voiceover says it. Keep "notes" to one sentence
+explaining your staging choice.
+{('PREVIOUS ATTEMPT WAS REJECTED: ' + feedback) if feedback else ''}
+DRAFT:
+{_j(draft)}"""
+    obj = {"type": "object", "additionalProperties": True}
+    schema = _obj({"mood": _arr(_obj({"t": NUM, "mood": STR}), 1),
+                   "actors": _arr({**obj, "required": ["id"], "properties": {"id": STR}}, 1),
+                   "props": _arr(obj), "panels": _arr(obj), "badges": _arr(obj),
+                   "camera": _arr({**obj, "required": ["t"], "properties": {"t": NUM}}, 1),
+                   "transition": obj, "notes": STR},
+                  ["mood", "actors", "camera", "notes"])
+    # no skill attached: the Phase A row already carries the director's intent, and the skill text would
+    # crowd a local model's context (the plan itself needs the room)
+    return AgentTask("scene_plan", prompt, schema, [], "direction",
+                     {"clip": clip, "count": count, "row": row, "vo": vo, "style": style, "theme": theme, "ratio": ratio,
+                      "duration": duration, "talk": talk, "catalog": catalog, "draft": draft, "feedback": feedback})

@@ -346,3 +346,10 @@ def learn_read(retention: Any, ig_insights: str, plan: list, duration: float) ->
             "change": "Tighten the first line; land the stakes earlier." if leak and leak >= 25 else "Hook is healthy; look at packaging.",
             "ig_findings": ["dry run: paste real insights for an ig-audit read"] if ig_insights else [],
             "adjustments": adjustments}
+
+
+def scene_plan(clip: int, count: int, row: dict, vo: str, style: str, theme: str, ratio: str, duration: float,
+               talk: list, catalog: dict, draft: dict, feedback: str = "") -> dict:
+    """Dry run: the keyword planner's draft, unchanged, with a note saying so."""
+    keep = {k: draft[k] for k in ("mood", "actors", "props", "panels", "badges", "camera", "transition") if k in draft}
+    return {**FIX, **keep, "props": keep.get("props", []), "notes": "dry-run fixture: the keyword plan as drafted"}

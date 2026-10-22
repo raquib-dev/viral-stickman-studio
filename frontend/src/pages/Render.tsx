@@ -45,6 +45,7 @@ export default function Render() {
         </GatePanel></div>
         {settings?.dry_run && <div className="mt-2"><Note>Dry run is on: the mock backend writes free placeholder clips. Turn it off in Settings for a real render.</Note></div>}
       </Section>
+      {r?.backend === "local-threejs" && <ScenePlans n={n} />}
       <Section title="Clips" right={<span className="text-xs text-ink-3" data-testid="clip-summary">{doneCount}/{n} done · {attemptsUsed} attempt(s), {failedAttempts} failed{row?.status === "running" && row.message ? ` · ${row.message}` : ""}</span>}>
         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-3" data-testid="clip-grid">
           {Array.from({ length: n }, (_, k) => (
@@ -134,5 +135,61 @@ function ClipCard({ k, c, onErr }: { k: number; c: any; onErr: (e: string | null
         onClick={async () => { onErr(null); try { await api.post(`/projects/${slug}/clips/${k + 1}/regenerate`); } catch (e: any) { onErr(e.message); } }}>
         {c?.status === "failed" ? "↻ Retry this clip" : "↻ Regenerate this clip only"}</button>
     </div>
+  );
+}
+
+const MOOD_COLOR: Record<string, string> = {
+  neutral: "#9aa3b2", money: "#58d68d", success: "#ffcf3d", danger: "#ff4d4d", calm: "#7cc4ff", tech: "#4de1ff",
+  mystery: "#b48cff", nostalgia: "#e8b46b", sad: "#8aa2b8", love: "#ff7aa8", nature: "#7ccf6b",
+};
+
+/** Phase 3: the AI-written 3D scene plan for each clip, what was repaired, and re-plan per clip. */
+function ScenePlans({ n }: { n: number }) {
+  const { slug, snap } = useProject();
+  const [index] = useProjectFile<Record<string, any>>("scenes/index.json");
+  const [err, setErr] = useState<string | null>(null);
+  const row = snap?.stages.find((s) => s.stage === "scene_plan");
+  const busy = row?.status === "running" || row?.status === "queued" || snap?.pipeline?.status === "running";
+  const replan = async (k: number) => {
+    setErr(null);
+    try { await api.post(`/projects/${slug}/stages/scene_plan/run`, { params: { only: [k], force: true } }); } catch (e: any) { setErr(e.message); }
+  };
+  return (
+    <Section title="3D scene plans" right={<RunStageButton stage="scene_plan" label="Plan all scenes" />}>
+      <p className="mb-3 text-xs text-ink-3">Your writing model stages each clip as data for the 3D renderer (mood, gestures, props, panels, camera), using only names the renderer knows. Each plan is checked: unknown names fall back to safe ones, things are kept in frame, and numbers the voiceover doesn't say are removed. If a plan still fails, the keyword plan is used. Edit <code>scenes/clip-NN.json</code> by hand and it is kept (delete <code>_planned_by</code> from it to protect it).</p>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="scene-plans">
+        {Array.from({ length: n }, (_, k) => {
+          const p = index?.[String(k + 1)];
+          return (
+            <div key={k} className="card-2 text-xs" data-testid={`scene-plan-${k + 1}`}>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <b className="text-sm">Clip {k + 1}</b>
+                {p ? <span className="chip !py-0" title="who wrote this plan">{p.planned_by === "ai" ? "✦ AI plan" : p.planned_by}</span> : <span className="text-ink-3">not planned</span>}
+              </div>
+              {p && (
+                <dl className="grid grid-cols-[64px_1fr] gap-x-2 gap-y-0.5">
+                  <dt className="text-ink-3">Style</dt><dd>{p.style}</dd>
+                  <dt className="text-ink-3">Colour</dt><dd className="flex flex-wrap items-center gap-1">{p.moods.map((m: string, i: number) => (
+                    <span key={i} className="inline-flex items-center gap-1">{i > 0 && "→"}<span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: MOOD_COLOR[m] ?? "#999" }} />{m}</span>))}</dd>
+                  <dt className="text-ink-3">Gestures</dt><dd>{p.gestures.join(", ") || "—"}</dd>
+                  <dt className="text-ink-3">Props</dt><dd>{p.props.join(", ") || "—"}{p.actors > 1 ? " · 2 characters" : ""}{p.panels ? ` · ${p.panels} panel(s)` : ""}{p.badges.length ? ` · badge “${p.badges.join("”, “")}”` : ""}</dd>
+                  <dt className="text-ink-3">Camera</dt><dd>{p.shots.join(" → ")}</dd>
+                </dl>
+              )}
+              {p?.notes && <p className="mt-1 italic text-ink-2">“{p.notes}”</p>}
+              {p?.fixes?.length > 0 && (
+                <details className="mt-1"><summary className="cursor-pointer" style={{ color: "var(--serious)" }}>{p.fixes.length} repair(s)</summary>
+                  <ul className="mt-1 list-disc pl-4 text-ink-2">{p.fixes.map((f: string, i: number) => <li key={i}>{f}</li>)}</ul></details>
+              )}
+              <div className="mt-2 flex gap-2">
+                <button className="btn !py-0.5 text-xs" disabled={busy} onClick={() => replan(k + 1)} data-testid={`replan-${k + 1}`}>↻ Re-plan</button>
+                {p && <a className="btn !py-0.5 text-xs" href={fileUrl(slug!, p.file)} target="_blank" rel="noreferrer">View plan</a>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {err && <ErrorBox>{err}</ErrorBox>}
+    </Section>
   );
 }

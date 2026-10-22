@@ -102,6 +102,84 @@ def render_spend(project: str) -> float:
     return sum(j["cost_usd"] for j in db.list_jobs(project, 1000) if j["stage"] == "render")
 
 
+@stage("scene_plan", "Plan 3D scenes",
+       description="AI scene plan per clip for the three.js renderer: checked, repaired, keyword plan as fallback.")
+async def scene_plan(ctx) -> dict:
+    from ..agent.runner import AgentError
+    from ..render import threejs as tj
+    if ctx.settings["render"]["backend"] != "local-threejs":
+        ctx.log(f"render backend is {ctx.settings['render']['backend']}: 3D scene plans are only used by local-threejs; skipping")
+        return {"outputs": []}
+    p = ctx.project_data()
+    a = ctx.read_json("direction/phase-a.json")
+    specs = _clip_specs(ctx, p)
+    cfg = ctx.settings["render"].get("threejs", {})
+    wpm = float(ctx.settings.get("speaking_wpm", 150))
+    only = set(ctx.params.get("only") or [])
+    force = bool(ctx.params.get("force")) or bool(only)
+    index = ctx.read_json("scenes/index.json", default={}) if ctx.path("scenes/index.json").exists() else {}
+    planned = 0
+    for n, sp in enumerate(specs):
+        if only and sp.index + 1 not in only:
+            continue
+        ctx.check_cancelled()
+        rel = f"scenes/clip-{sp.index + 1:02d}.json"
+        old = ctx.read_json(rel, default={}) if ctx.path(rel).exists() else {}
+        key = _prompt_hash(f"{sp.vo}|{sp.prompt}|{tj.style_for(sp, cfg)}|{cfg.get('mood', 'auto')}|{sp.ratio}")
+        if old and "_planned_by" not in old and not force:
+            ctx.log(f"clip {sp.index + 1}: keeping your hand-edited {rel}")
+            continue
+        if old.get("_key") == key and not force:
+            ctx.log(f"clip {sp.index + 1}: plan is up to date")
+            continue
+        words = len((sp.vo or "").split())
+        talk = (0.4, round(min(sp.duration - 0.3, 0.4 + words / (wpm / 60)), 2))
+        draft = tj.auto_scene(sp, cfg, talk)
+        row = a["rows"][sp.index] if sp.index < len(a.get("rows", [])) else {}
+        w, h = dims(sp.ratio, sp.resolution)
+        scene, fixes, errs, by, notes, feedback = draft, [], [], "keywords", "", ""
+        for attempt in (1, 2):
+            try:
+                res = await ctx.agent.run(tasks.scene_plan(sp.index + 1, len(specs), row, sp.vo, draft["style"], draft["theme"],
+                                                           sp.ratio, sp.duration, list(talk), tj.CATALOG, draft, feedback), ctx)
+            except AgentError as e:
+                ctx.log(f"clip {sp.index + 1}: AI plan failed ({str(e)[:200]}); using the keyword plan", "warn")
+                break
+            body = {k: v for k, v in res.items() if k not in ("notes", "_fixture")}
+            candidate = {**{k: draft[k] for k in ("version", "width", "height", "fps", "duration", "style", "theme", "seed", "quality")}, **body}
+            candidate.setdefault("transition", draft["transition"])
+            fixed, fx, er = tj.check_and_repair(candidate, sp.vo, sp.duration, h > w)
+            if not er:
+                scene, fixes, by, notes = fixed, fx, "fixture (dry run)" if res.get("_fixture") else "ai", res.get("notes", "")
+                break
+            feedback = "; ".join(er[:6])
+            ctx.log(f"clip {sp.index + 1}: AI plan rejected (attempt {attempt}): {feedback}", "warn")
+            errs = er
+        if by == "keywords" and errs:
+            ctx.log(f"clip {sp.index + 1}: using the keyword plan after {len(errs)} problem(s) in the AI plan", "warn")
+        for f in fixes:
+            ctx.log(f"clip {sp.index + 1}: repaired: {f}", "warn")
+        scene.update({"_planned_by": by, "_key": key, "_notes": notes, "_fixes": fixes})
+        ctx.write_json(rel, scene)
+        hero = scene["actors"][0]
+        moods = scene["mood"] if isinstance(scene["mood"], list) else [{"mood": scene["mood"]}]
+        index[str(sp.index + 1)] = {
+            "planned_by": by, "notes": notes, "fixes": fixes, "style": scene.get("style"),
+            "moods": [m["mood"] for m in moods], "gestures": [g["gesture"] for g in hero.get("gestures", [])],
+            "props": [pr["type"] for pr in scene.get("props", [])], "actors": len(scene["actors"]),
+            "shots": [(k["shot"] if isinstance(k.get("shot"), str) else (k.get("shot") or {}).get("type", "custom")) for k in scene["camera"]],
+            "panels": len(scene.get("panels") or []), "badges": [b_["text"] for b_ in scene.get("badges") or []],
+            "updated_at": time.time(), "file": rel}
+        ctx.write_json("scenes/index.json", index)
+        planned += 1
+        ctx.log(f"clip {sp.index + 1}: planned by {by} · {scene.get('style')} · mood {' → '.join(index[str(sp.index + 1)]['moods'])} · "
+                f"gestures {', '.join(index[str(sp.index + 1)]['gestures']) or '-'} · props {', '.join(index[str(sp.index + 1)]['props']) or '-'}"
+                + (f" · “{notes[:120]}”" if notes else ""))
+        ctx.progress((n + 1) / len(specs), f"clip {sp.index + 1} planned ({by})")
+    ctx.log(f"{planned} scene plan(s) written; the render uses scenes/clip-NN.json")
+    return {"outputs": ["scenes/"]}
+
+
 @stage("render", "Render clips", lane="render",
        description="One clip at a time with retries; cost gate before any paid clip; hard per-video budget cap.")
 async def render(ctx) -> dict:

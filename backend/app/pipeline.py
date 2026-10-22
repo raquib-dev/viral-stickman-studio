@@ -9,7 +9,7 @@ import time
 from . import db
 from .jobs import bus, manager
 
-PIPELINE = ["niche", "discover", "patterns", "topics", "hooks", "script", "direction_a", "direction_b",
+PIPELINE = ["niche", "discover", "patterns", "topics", "hooks", "script", "direction_a", "direction_b", "scene_plan",
             "render", "stitch", "package"]
 # Learn runs on its own after you publish (it needs your retention export / insights).
 ALL_STAGES = PIPELINE + ["learn"]

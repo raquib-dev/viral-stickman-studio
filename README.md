@@ -230,7 +230,17 @@ voiceover says.
 Each clip's scene comes from `projects/<slug>/scenes/clip-NN.json` if that file exists (the plan the app
 made is saved next to the clip as `clips/clip-NN.scene.json`: copy it there and edit), otherwise from the
 planner above. Edit, then **Regenerate this clip only**. The format and the rules are in
-`renderer/RULES.md`. The AI scene planner and AI-drawn props are the next phases.
+`renderer/RULES.md`.
+
+**AI scene planner (the "3D plan" step, after Phase B).** With local-threejs selected, your writing model
+(Claude, local or hybrid: in hybrid it counts as direction, so Claude does it) stages every clip from the
+approved Phase A row and the voiceover: colour moods timed to the words, 1-3 gestures, props the line
+mentions, an optional note or code panel in the line's own words, a badge only for numbers it says, a second
+character when the line is about someone else, and 2-4 named camera shots, plus one sentence on why. The
+app checks every plan (unknown names → safe defaults, everything kept in frame, unspoken numbers removed),
+retries once, and falls back to the keyword plan, so a render never fails because of the planner. The
+Render page shows each clip's plan, its repairs and a **Re-plan** button. The prompt is about 1,200 tokens, so
+it fits a local 8B model's context.
 
 ### ComfyUI on Windows (optional: AI-generated video on your GPU)
 

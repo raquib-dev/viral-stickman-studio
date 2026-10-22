@@ -6,12 +6,12 @@ import { ErrorBox, ProgressBar, StatusChip, fmtDur, fmtUsd } from "./ui";
 
 export const STAGE_PAGE: Record<string, string> = {
   niche: "niche", discover: "discover", patterns: "patterns", topics: "topics", hooks: "studio", script: "studio",
-  direction_a: "studio", direction_b: "studio", render: "render", stitch: "render", package: "package", learn: "learn",
+  direction_a: "studio", direction_b: "studio", scene_plan: "render", render: "render", stitch: "render", package: "package", learn: "learn",
 };
 export const GATE_PAGE: Record<string, string> = { topic: "topics", hook: "studio", phase_a: "studio", render_cost: "render" };
 const SHORT: Record<string, string> = {
   niche: "Niche", discover: "Discover", patterns: "Patterns", topics: "Topics", hooks: "Hooks", script: "Script",
-  direction_a: "Phase A", direction_b: "Phase B", render: "Render", stitch: "Stitch", package: "Package", learn: "Learn",
+  direction_a: "Phase A", direction_b: "Phase B", scene_plan: "3D plan", render: "Render", stitch: "Stitch", package: "Package", learn: "Learn",
 };
 
 /** The always-visible pipeline strip: one cell per stage with live status and progress, plus Run / Stop. */

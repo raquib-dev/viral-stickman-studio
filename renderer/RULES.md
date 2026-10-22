@@ -44,6 +44,13 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
     idle, beat gestures and head nods that follow the voice, small glances, and gestures that ease in with a
     gentle overshoot. All of it is computed from time, so rule 2 still holds. `"limbs": "rigid"` on an actor
     (or the scene) brings back straight segments.
+14. **AI plans are checked, repaired, or replaced, never trusted blindly.** The "Plan 3D scenes" stage
+    asks the writing model for a scene plan per clip (data only, names from `catalog.json`, the approved
+    Phase A row as its brief). `check_and_repair` then maps unknown names to safe defaults, clamps times
+    and positions into the clip and the frame, trims clutter (2 actors, 3 props, 2 panels, 2 badges), and
+    removes any on-screen number the voiceover does not say. A plan that still fails gets one retry with
+    the errors, then the keyword plan is used. Hand-edited plan files (no `_planned_by`) are never
+    overwritten.
 
 ## Scene plan (version 2)
 

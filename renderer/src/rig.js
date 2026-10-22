@@ -43,7 +43,7 @@ const SPINE_R = 0.04;
 export const BUILDS = {
   stick: { headR: HEAD_R, len: LEN, ankle: ANKLE, limbR: LIMB_R, spineR: SPINE_R, k: 1, headY: 1.62, size: 1 },
   chibi: {
-    headR: 0.235, ankle: 0.05, limbR: 0.058, spineR: 0.125, neckR: 0.045, shoulderR: 0.085, handR: 0.06, footR: 0.07,
+    headR: 0.235, ankle: 0.05, limbR: 0.058, spineR: 0.125, neckR: 0.045, shoulderR: 0.066, handR: 0.06, footR: 0.07,
     len: { spine: 0.34, neck: 0.03, shoulder: 0.07, upperArm: 0.2, lowerArm: 0.19, hip: 0.07, upperLeg: 0.27, lowerLeg: 0.26 },
   },
 };
@@ -386,7 +386,7 @@ export class Stickman {
       handL: ball(P.handR, M.skin), handR: ball(P.handR, M.skin), footL: ball(P.footR, M.shoes), footR: ball(P.footR, M.shoes),
     };
     // only hands and shoes show; the rest are inside the clothes (a chest ball read as a scarf under the chin)
-    for (const k of ["elL", "elR", "knL", "knR", "hpL", "hpR", "chest"]) this.joints[k].visible = false;
+    for (const k of ["elL", "elR", "knL", "knR", "hpL", "hpR", "chest", "shL", "shR"]) this.joints[k].visible = false;
     this.joints.footL.scale.set(0.9, 0.55, 1.5);
     this.joints.footR.scale.set(0.9, 0.55, 1.5);
     this.tubes = {};

@@ -312,8 +312,8 @@ def layout(durs: list[float], pauses: list[bool], clip_len: float = 10.0, max_sp
 
 # ---- the renderer scene -----------------------------------------------------------------------------
 
-WIDE = [{"pos": [0.35, 1.25, 1.75], "look": [0.0, 0.98, -0.35], "fov": 38},
-        {"pos": [-0.75, 1.22, 1.6], "look": [0.1, 0.96, -0.3], "fov": 38}]
+WIDE = [{"pos": [0.4, 1.25, 1.8], "look": [0.1, 0.96, -0.25], "fov": 38},
+        {"pos": [-0.42, 1.22, 1.8], "look": [0.08, 0.95, -0.2], "fov": 40}]
 
 
 def build_scene(plan: list[dict], timing: dict, cast: dict, mouths: dict, fps: int, width: int, height: int,

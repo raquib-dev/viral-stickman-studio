@@ -66,7 +66,7 @@ export class Mascot {
       return f;
     });
     this.headY = R * 1.25;      // the face centre, for camera shots
-    this.size = 0.5;            // relative to the stick figure: a close-up shows it at about half the frame
+    this.size = 0.6;            // relative to the stick figure: a close-up shows it at about half the frame
     this.hands = null;
     this.blinks = [];
     for (let t = 0.9 + hash(3, this.opts.seed) * 1.4, k = 0; t < 600; k++) {

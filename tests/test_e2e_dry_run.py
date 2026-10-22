@@ -5,6 +5,7 @@ import json
 import pytest
 
 from backend.app import db, paths, pipeline
+from backend.app import stages  # noqa: F401  (registers the stages when this file runs alone)
 from backend.app.jobs import manager
 
 pytestmark = pytest.mark.e2e
@@ -46,5 +47,16 @@ async def test_full_pipeline_niche_to_package():
     assert loud["safe_zone_violations"] == []
     pkg = json.loads((root / "package/package.json").read_text())
     assert pkg["best"]["title"] and pkg["policy_notes"]
+    assert pkg["seconds"] == pytest.approx(60.0, abs=0.5) and pkg["pinned_comment"] and "9:16" in pkg["cover_prompt"]
+    blocks = (root / "package/copy-blocks.md").read_text()
+    assert "## Pinned comment" in blocks and "## Cover image prompt" in blocks
+    # one block regenerates on its own, steered by a note; the rest stays
+    _, fut = manager.submit(slug, "package_part", {"part": "pinned_comment", "note": "funnier"})
+    assert await fut == "succeeded"
+    pkg2 = json.loads((root / "package/package.json").read_text())
+    assert pkg2["pinned_comment"] != pkg["pinned_comment"] and "funnier" in pkg2["pinned_comment"]
+    assert pkg2["description"] == pkg["description"] and pkg2["history"][-1]["part"] == "pinned_comment"
+    _, fut = manager.submit(slug, "package_part", {"part": "title"})
+    assert await fut == "failed"
     assert {g["name"] for g in db.list_gates(slug)} == {"topic", "hook", "phase_a"}  # mock render is free: no cost gate
     await manager.stop()

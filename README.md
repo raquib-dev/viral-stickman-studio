@@ -133,8 +133,14 @@ The Discover log shows the units each run uses.
    - **Render cost**: shows the estimate and your budget cap.
 4. **Render**: a per-clip grid and **Regenerate this clip only**. Stitch builds `final/final.mp4` with
    burned-in captions, the hook card, and loudness normalised to −16 LUFS.
-5. **Package**: titles linted as title + thumbnail pairs, description, tags, chapters (long-form),
-   Instagram caption with lint, claims to verify, policy notes, and copy buttons.
+5. **Package**: titles linted as title + thumbnail pairs, description, tags, chapters (long-form,
+   60 s and over only), Instagram caption with lint, a **pinned comment** to post after publishing, a
+   **cover image prompt** sized to the project's ratio (9:16 Shorts/Reels cover or 16:9 thumbnail), claims to
+   verify, and policy notes. Each block has its own copy button. The description, pinned comment, cover prompt
+   and caption each have **↻ Regenerate** with an optional note ("funnier", "shorter") that rewrites only that
+   block. The writer gets the real video length and the actual script, so it can't invent a length; links,
+   placeholder URLs and timestamps a short can't have are removed, and a stated length that isn't in the
+   script is flagged under the description.
 6. **Learn**: after you publish, upload the YouTube Studio retention CSV and/or paste Instagram
    insights. Findings shift the niche profile, so the next video's beats move.
 

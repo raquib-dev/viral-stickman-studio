@@ -199,13 +199,16 @@ def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: s
             ("b", "You said no at 1 AM.", "normal"), ("a", "[annoyed] It was the WRONG blue.", "quick"),
             ("b", "Knowing that is the job.", "normal"), ("a", "[sighs] ...Okay. It's good.", "beat"),
             ("b", "[excited] It's great!!", "quick"), ("a", f"[exasperated] The footer's two pixels off, {b}aaa.", "normal")]
-    want = max(4, round(duration / 3.4))
-    lines = [{"speaker": "a", "text": hook["say"], "timing": "normal"}] + [{"speaker": s, "text": t, "timing": tm} for s, t, tm in body]
-    if len(lines) > want:
-        lines = lines[:want - 2] + lines[-2:]
+    # as many lines as fill about 90% of the length (clips end with the talk, so the lines set the video's length)
+    from ..dialogue import estimate_seconds
+    full = [{"speaker": "a", "text": hook["say"], "timing": "normal"}] + [{"speaker": s, "text": t, "timing": tm} for s, t, tm in body]
+    want = len(full)
+    while want > 4 and estimate_seconds(full[:want - 2] + full[-2:], wpm) > 0.92 * duration:
+        want -= 1
+    lines = full[:want - 2] + full[-2:] if want < len(full) else full
     filler = [("a", "[flatly] No.", "quick"), ("b", "Again?", "quick"), ("a", "Again.", "normal"), ("b", "[cheerfully] Version nine it is.", "normal")]
     k = 0
-    while len(lines) < want:                       # longer videos: more rounds of no before the ending
+    while estimate_seconds(lines, wpm) < 0.88 * duration:     # longer videos: more rounds of no before the ending
         s_, t_, tm_ = filler[k % len(filler)]
         lines.insert(len(lines) - 2, {"speaker": s_, "text": t_, "timing": tm_})
         k += 1
@@ -217,6 +220,10 @@ def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: s
         if (cast.get(s_) or {}).get("enabled"):
             for j in b_lines[k::3][:max(2, len(lines) // 9)]:
                 lines[j] = {"speaker": s_, "text": tic, "timing": "quick"}
+    while estimate_seconds(lines, wpm) < 0.88 * duration:     # the short tics left room: fill it again
+        s_, t_, tm_ = filler[k % len(filler)]
+        lines.insert(len(lines) - 2, {"speaker": s_, "text": t_, "timing": tm_})
+        k += 1
     # her pose changes on a few of her lines: a hand at her temple, arms crossed, then hands back on the desk
     a_lines = [j for j, ln in enumerate(lines) if ln["speaker"] == "a"]
     for j, pose in zip(a_lines[::max(1, len(a_lines) // 3)], ("temple", "crossed", "rest")):
@@ -364,7 +371,8 @@ def phase_b(phase_a_md: str, rows: list, ratio: str, duration: int, style: str, 
 
 # ---- packaging and learn --------------------------------------------------------------------
 
-def package(title: str, narration: str, topic: dict, hook: dict, duration: int, platforms: list, chapters: list) -> dict:
+def package(title: str, narration: str, topic: dict, hook: dict, duration: int, platforms: list, chapters: list,
+            actual_seconds: float | None = None, ratio: str = "9:16", look: str = "") -> dict:
     t = title
     titles = [t, "Your Brain Thinks Future-You Is a Stranger", "Why Saving Feels Like Giving Money Away",
               "The Real Reason Willpower Fails at Saving", "Stop Blaming Willpower for Your Savings",
@@ -380,7 +388,17 @@ def package(title: str, narration: str, topic: dict, hook: dict, duration: int, 
             "chapter_titles": [], "ig_caption": "Would you automate it, or trust yourself? Comment AUTO.\n\n"
                                                "Present bias makes tonight louder than future-you. Saving money gets easier when you remove the choice on payday.\n\n"
                                                "#moneypsychology #behavioralfinance #savingmoney",
-            "ig_keywords": ["present bias", "saving money"], "cutdowns": []}
+            "ig_keywords": ["present bias", "saving money"], "cutdowns": [],
+            "pinned_comment": "Be honest: which one are you, the one who saves or the one who says 'next month'?",
+            "cover_prompt": (f"{'Vertical 9:16 cover, 1080x1920' if ratio == '9:16' else 'Horizontal 16:9 thumbnail, 1280x720'}: "
+                             f"a frame from the video, {look or 'the main character centred'}, a deadpan face, the cover text "
+                             "\"NOT YOU?\" in bold white with a dark outline in the middle third; no logos, no watermark.")}
+
+
+def package_part(part: str, previous: str, note: str, title: str, narration: str, seconds: float, ratio: str,
+                 look: str = "") -> dict:
+    """Dry run: a visibly new version of one package piece."""
+    return {**FIX, "text": f"(new {part.replace('_', ' ')}) {title}" + (f" - {note}" if note else "")}
 
 
 def learn_read(retention: Any, ig_insights: str, plan: list, duration: float) -> dict:

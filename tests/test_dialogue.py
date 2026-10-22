@@ -52,10 +52,14 @@ def test_delivery_text_helpers():
 
 
 def test_good_script_passes_and_each_rule_is_checked():
-    assert d.dialogue_flags(GOOD, CAST, HOOK, 60, 150) == []
+    assert d.dialogue_flags(GOOD, CAST, HOOK, 40, 150) == []
+    short = " | ".join(d.dialogue_flags(GOOD, CAST, HOOK, 60, 150))     # 17 lines run about 38 s: too short for 60 s
+    assert "the lines run about 38s but the video is set to 60s: add about" in short
+    lo, hi = d.target_lines(60)
+    assert lo <= 30 <= hi and 40 <= d.estimate_seconds(GOOD["lines"] * 2, 150)
     tagged_hook = {**GOOD, "lines": [{"speaker": "a", "text": "[exasperated] Claaauude. The client said it's GREAT.", "timing": "normal"},
                                      *GOOD["lines"][1:]]}
-    assert d.dialogue_flags(tagged_hook, CAST, HOOK, 60, 150) == []
+    assert d.dialogue_flags(tagged_hook, CAST, HOOK, 40, 150) == []
     bad = {**GOOD, "title": "She Said No [sighs].", "turn": 2, "lines": [
         {"speaker": "b", "text": "Hello there."}, *GOOD["lines"][1:5],
         {"speaker": "a", "text": "Studies show 80% of developers redo things at least twice every week."},
@@ -418,3 +422,26 @@ def test_still_motion_is_the_default_and_lively_restores_gestures():
     assert not la["still"] and "think" in [g["gesture"] for g in la["gestures"]] and "cheer" in [g["gesture"] for g in lb["gestures"]]
     assert len(lb["look"]) > 1
     assert tj.validate_scene(still) == [] and tj.validate_scene(lively) == []
+
+
+def test_package_description_has_no_links_or_impossible_timestamps():
+    from backend.app.stages.production import clean_description, description_checks
+    text = ("Watch a 10-minute showdown where I race an AI robot.\n\nhttps://example.com/resource\n\n"
+            "Timestamps:\n0:00 Intro\n0:10 Timer starts\n0:45 Results\n0:50 Wrap-up")
+    short = clean_description(text, 37, chapters_ok=False)
+    assert "example.com" not in short and "Timestamps" not in short and "0:10" not in short
+    long = clean_description(text, 48 * 60, chapters_ok=True)
+    assert "0:10 Timer starts" in long and "Timestamps:" in long and "http" not in long
+    assert description_checks(short, "Claude. Good morning.") and not description_checks("Morning again.", "")
+
+
+def test_package_writer_gets_the_real_length_ratio_and_script():
+    from backend.app.agent import tasks
+    t = tasks.package("t", "Mia: Claude. Hi.\nClaude: Hello!", {}, {"say": "Claude. Hi."}, 60, ["shorts"], [{"label": "0:00"}], 37.0, "9:16", "a desk")
+    assert "VIDEO LENGTH: 37 s (a short)" in t.prompt and "1080x1920" in t.prompt and "no timestamps" in t.prompt
+    assert "DRAFT CHAPTERS (chapters.py): []" in t.prompt and "Plain international English" in t.prompt
+    assert {"pinned_comment", "cover_prompt"} <= set(t.schema["required"])
+    wide = tasks.package("t", "x", {}, {"say": "x"}, 600, ["youtube"], [], 600.0, "16:9")
+    assert "1280x720" in wide.prompt
+    part = tasks.package_part("description", "old text", "funnier", "t", "x", 37.0, "9:16")
+    assert "old text" in part.prompt and "funnier" in part.prompt and part.schema["required"] == ["text"]

@@ -628,30 +628,114 @@ POLICY_NOTES = [
 ]
 
 
-@stage("package", "Package", description="Titles + thumbnail pairing lint, SEO, chapters, IG caption, humanizer, cut-downs.",
+_URL = re.compile(r"(https?://\S+|www\.\S+|\bexample\.(com|org)\S*)", re.I)
+_STAMP = re.compile(r"^\s*\(?(\d{1,2}):(\d{2})(?::(\d{2}))?\)?\s+\S")
+_STAMP_HEAD = re.compile(r"^\s*(timestamps?|chapters?)\s*:?\s*$", re.I)
+
+
+def clean_description(text: str, seconds: float, chapters_ok: bool) -> str:
+    """Remove what a description must not carry: links and placeholder URLs (nothing is linked from here),
+    timestamps on a short or past the video's end, and an empty "Timestamps:" heading left behind."""
+    out = []
+    for line in (text or "").splitlines():
+        line = _URL.sub("", line).rstrip()
+        m = _STAMP.match(line)
+        if m:
+            h, mm, ss = (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m.group(3) else (0, int(m.group(1)), int(m.group(2)))
+            if not chapters_ok or seconds < 60 or h * 3600 + mm * 60 + ss >= seconds:
+                continue
+        out.append(line)
+    out = [ln for k, ln in enumerate(out) if not (_STAMP_HEAD.match(ln) and not any(_STAMP.match(x) for x in out[k + 1:k + 2]))]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+_LENGTH_WORDS = re.compile(r"\b(\d+|one|two|three|five|ten|fifteen|twenty|thirty|sixty)[\s-]*(minutes?|mins?|seconds?|secs?|hours?)\b", re.I)
+
+
+def description_checks(text: str, script_text: str) -> list[str]:
+    """Things a person should look at before pasting: a stated length (the writer may have taken a number from the
+    story for the video's length)."""
+    out = []
+    for m in _LENGTH_WORDS.finditer(text or ""):
+        if m.group(0).lower() not in (script_text or "").lower():
+            out.append(f"mentions \"{m.group(0)}\", which is not in the script: check it is not a made-up video length")
+    return out
+
+
+def _package_script(s: dict, p: dict) -> str:
+    """What is actually said, for the packaging writer: the dialogue with who says it, or the narration."""
+    if s.get("mode") == "dialogue":
+        cast = dlg.cast_for(p)
+        lines = s.get("lines") or [ln for c in s["clips"] for ln in c.get("lines", [])]
+        return "\n".join(f"{cast.get(ln['speaker'], {}).get('name', ln['speaker'])}: {dlg.clean(ln['text'])}" for ln in lines)
+    return "\n".join(c["vo"] for c in s["clips"])
+
+
+def _package_look(ctx, s: dict, p: dict) -> str:
+    """The look of the video in words, for the cover prompt."""
+    if s.get("mode") == "dialogue":
+        cast, sc = dlg.cast_for(p), dlg.scene_for(s, ctx.settings)
+        ais = ", ".join(f"{cast[k]['name']} (a small low-poly {cast[k]['appearance'].get('shape', 'blob')} creature with rectangle eyes, "
+                        f"{cast[k]['appearance'].get('color', '')})" for k in dlg.speakers(cast)[1:])
+        a = cast["a"]
+        where = ("a classroom whiteboard" if sc["set"] == "classroom"
+                 else f"a desk by a big window onto a city ({ {'morning': 'morning light', 'rain': 'rainy night', 'night': 'late night, city lights', 'dusk': 'dusk, purple-pink sky'}[sc['look']]})")
+        return (f"low-poly 3D, flat-shaded, soft light and shallow depth of field; {a['name']}, a chibi person with a big round head, "
+                f"round glasses, {a['appearance'].get('hair_style', 'long')} hair and a {a['appearance'].get('top', 'yellow')} jacket, "
+                f"at {where}; her AI: {ais}")
+    return f"stick-figure explainer, style {p.get('style', '1')}, {p.get('theme', 'dark')} theme"
+
+
+def _package_seconds(ctx, p: dict) -> float:
+    f = ctx.path("final/final.mp4")
+    try:
+        return round(float(probe(f)["duration"]), 1) if f.exists() else float(p["duration"])
+    except Exception:
+        return float(p["duration"])
+
+
+def _write_copy_blocks(ctx, result: dict) -> None:
+    best = result.get("best") or {}
+    blocks = ["# Copy blocks (nothing has been posted; paste these yourself)", "",
+              f"Video length: {result.get('seconds', '?')} s, {result.get('ratio', '')}", "",
+              "## YouTube title", "```", best.get("title", ""), "```", "## Thumbnail / cover text", "```", best.get("thumb", ""), "```",
+              "## Cover image prompt", "```", result.get("cover_prompt", "").strip(), "```",
+              "## Description", "```", result["description"].strip(), *(["", *result["chapter_lines"]] if result["chapter_lines"] else []), "```",
+              "## Tags", "```", ", ".join(result["tags"]), "```",
+              "## Pinned comment (post it right after publishing, then pin it)", "```", result.get("pinned_comment", "").strip(), "```",
+              "## Instagram caption", "```", result["ig_caption"].strip(), "```", "## Claims to verify before publishing",
+              *[f"- {c}" for c in result["claims_to_source"]], "", "## Policy notes", *[f"- {n}" for n in POLICY_NOTES]]
+    ctx.write_text("package/copy-blocks.md", "\n".join(blocks) + "\n")
+
+
+@stage("package", "Package", description="Titles + thumbnail pairing lint, SEO, chapters, IG caption, pinned comment, cover prompt, humanizer.",
        skills=["yt-package", "yt-seo", "yt-chapters", "ig-caption", "ig-human", "yt-shorts", "ig-repurpose"],
        tools=["yt-package/title.py", "yt-chapters/chapters.py", "ig-caption/caption.py", "ig-human/humanize.py", "ig-human/detect.py"])
 async def package(ctx) -> dict:
     p = ctx.project_data()
     s = ctx.read_json("script/script.json")
     fmt = fmt_for_project(p)
+    seconds = _package_seconds(ctx, p)
     srt_path = ctx.path("final/final.srt")
     srt = srt_path.read_text(encoding="utf-8") if srt_path.exists() else ""
     chapters = {"valid": False, "chapters": [], "note": "not applicable to Shorts/Reels"}
-    if fmt == "long" and srt:
-        chapters = await th(tools.chapters, srt, max(3, int(p["duration"]) // 60))
-    narration = "\n".join(c["vo"] for c in s["clips"])
-    pk = await ctx.agent.run(tasks.package(s["title"], narration, s["topic"], s["hook"], int(p["duration"]),
-                                           p.get("platforms", []), chapters.get("chapters", [])), ctx)
+    if fmt == "long" and srt and seconds >= 60:
+        chapters = await th(tools.chapters, srt, max(3, int(seconds) // 60))
+    script_text = _package_script(s, p)
+    look = _package_look(ctx, s, p)
+    pk = await ctx.agent.run(tasks.package(s["title"], script_text, s["topic"], s["hook"], int(p["duration"]),
+                                           p.get("platforms", []), chapters.get("chapters", []), seconds, p.get("ratio", "9:16"),
+                                           look), ctx)
     # title x thumbnail pairing: lint every title against each thumbnail text, keep the best pair
     pairs = []
     for thumb in pk["thumbnail_text"]:
         for row in await th(tools.title_lint, pk["titles"], thumb):
             pairs.append({**row, "thumb": thumb})
     pairs.sort(key=lambda r: -r["score"])
-    # humanize the long text blocks
-    desc_h = await th(tools.humanize, pk["description"])
-    cap_h = await th(tools.humanize, pk["ig_caption"])
+    # humanize the long text blocks; a description never carries links, nor timestamps a short cannot have
+    desc_h = await th(tools.humanize, clean_description(pk["description"], seconds, bool(chapters.get("valid"))))
+    cap_h = await th(tools.humanize, _URL.sub("", pk["ig_caption"]))
+    comment_h = await th(tools.humanize, _URL.sub("", pk.get("pinned_comment", "")))
     desc_d = await th(tools.detect, desc_h["text"])
     cap_d = await th(tools.detect, cap_h["text"])
     cap_lint = await th(tools.caption_lint, cap_h["text"], pk.get("ig_keywords") or [])
@@ -664,18 +748,48 @@ async def package(ctx) -> dict:
               "description": desc_h["text"], "description_detect": desc_d, "tags": pk["tags"], "queries": pk["queries"],
               "chapters": chapters, "chapter_lines": ch_lines, "ig_caption": cap_h["text"], "ig_caption_lint": cap_lint,
               "ig_caption_detect": cap_d, "cutdowns": pk["cutdowns"], "policy_notes": POLICY_NOTES,
-              "claims_to_source": s.get("claims_to_source", []), "_fixture": pk.get("_fixture", False)}
+              "pinned_comment": comment_h["text"], "cover_prompt": pk.get("cover_prompt", ""), "seconds": seconds,
+              "description_checks": description_checks(desc_h["text"], script_text),
+              "ratio": p.get("ratio", "9:16"), "claims_to_source": s.get("claims_to_source", []), "_fixture": pk.get("_fixture", False)}
     ctx.write_json("package/package.json", result)
+    _write_copy_blocks(ctx, result)
     best = result["best"] or {}
-    blocks = ["# Copy blocks (nothing has been posted; paste these yourself)", "",
-              "## YouTube title", "```", best.get("title", ""), "```", "## Thumbnail text", "```", best.get("thumb", ""), "```",
-              "## Thumbnail brief", pk["thumbnail_brief"], "", "## Description", "```", desc_h["text"].strip(),
-              *(["", *ch_lines] if ch_lines else []), "```", "## Tags", "```", ", ".join(pk["tags"]), "```",
-              "## Instagram caption", "```", cap_h["text"].strip(), "```", "## Claims to verify before publishing",
-              *[f"- {c}" for c in result["claims_to_source"]], "", "## Policy notes", *[f"- {n}" for n in POLICY_NOTES]]
-    ctx.write_text("package/copy-blocks.md", "\n".join(blocks) + "\n")
     ctx.log(f"best pairing: '{best.get('title')}' + thumbnail '{best.get('thumb')}' (score {best.get('score')}); "
-            f"caption lint {cap_lint['verdict']}; description human score {desc_d.get('human_score')}")
+            f"caption lint {cap_lint['verdict']}; description human score {desc_d.get('human_score')}; video {seconds:.0f}s")
+    return {"outputs": ["package/package.json", "package/copy-blocks.md"]}
+
+
+@stage("package_part", "Regenerate a package piece",
+       description="A new version of one copy block: the description, the pinned comment, the cover prompt or the IG caption.",
+       skills=["yt-seo", "yt-comment", "yt-package", "ig-caption", "ig-human"])
+async def package_part(ctx) -> dict:
+    part, note = str(ctx.params.get("part", "")), str(ctx.params.get("note", ""))[:400]
+    if part not in tasks.PACKAGE_PARTS:
+        raise StageError(f"unknown package part {part!r}; one of {', '.join(tasks.PACKAGE_PARTS)}")
+    if not ctx.path("package/package.json").exists():
+        raise StageError("run Package first")
+    p = ctx.project_data()
+    s = ctx.read_json("script/script.json")
+    pkg = ctx.read_json("package/package.json")
+    seconds = pkg.get("seconds") or _package_seconds(ctx, p)
+    res = await ctx.agent.run(tasks.package_part(part, pkg.get(part, ""), note, (pkg.get("best") or {}).get("title") or s["title"],
+                                                 _package_script(s, p), seconds, p.get("ratio", "9:16"), _package_look(ctx, s, p)), ctx)
+    text = res["text"]
+    if part == "description":
+        text = clean_description(text, seconds, bool((pkg.get("chapters") or {}).get("valid")))
+    if part != "cover_prompt":
+        text = (await th(tools.humanize, _URL.sub("", text) if part != "description" else text))["text"]
+    pkg[part] = text
+    if part == "description":
+        pkg["description_detect"] = await th(tools.detect, text)
+        pkg["description_checks"] = description_checks(text, _package_script(s, p))
+    if part == "ig_caption":
+        pkg["ig_caption_detect"] = await th(tools.detect, text)
+        pkg["ig_caption_lint"] = await th(tools.caption_lint, text, [])
+    pkg.setdefault("history", []).append({"part": part, "at": time.time(), "note": note})
+    ctx.write_json("package/package.json", pkg)
+    _write_copy_blocks(ctx, pkg)
+    ctx.log(f"new {part.replace('_', ' ')}" + (f" (asked: {note})" if note else ""))
     return {"outputs": ["package/package.json", "package/copy-blocks.md"]}
 
 

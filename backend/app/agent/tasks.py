@@ -154,6 +154,9 @@ Discussion) to write the narration for a {duration}s video = {n_clips} clips of 
   stakes line, re-hooks ("but here's the catch"), payoff, exactly ONE ask, and the last line repeats a word from the hook (loop).
 - If a deliberate mistake is planned, it must be visual or trivial only, never in a fact or number; describe it in "mistake".
 - Second person, contractions, short lines. Never invent statistics; use {{{{your number}}}} where a figure is needed.
+- Fill the length: every clip needs its full word count, so the video runs the {duration}s set for it.
+
+{PLAIN_FUNNY}
 - Read the voice profile at {"config/voice/instagram.md" if skill == "ig-reel" else "config/voice/youtube.md"}.
 
 TOPIC: {_j(topic)}
@@ -207,6 +210,18 @@ LINES:
 
 
 # ---- direction ------------------------------------------------------------------------------
+
+# every script and caption the app writes: funny for anyone who has used an AI chat, and easy English for viewers
+# in every country (many watch in their second language, with captions)
+PLAIN_FUNNY = """LANGUAGE AND HUMOUR (for every viewer, not only developers, not only Americans):
+- Funny first: every few lines a laugh, from a real situation anyone who has typed into an AI chat knows (it forgets,
+  it agrees too fast, it over-helps, it says "Done." and isn't, it apologises and repeats the mistake). The joke is the
+  situation and the timing, never a mean remark.
+- Plain international English: short, common words a viewer reading captions in their second language knows. No US
+  slang or idioms ("ballpark", "touch base", "hit it out of the park", "y'all"), no sports or US TV references, no
+  dollar or imperial units unless the topic is about them, dates and times that read anywhere ("at 1 AM", "on day 3").
+- Tech words only when the joke needs them, and then explained by the scene or an everyday comparison, so a viewer who
+  has never coded still gets it. A developer should still nod at the detail."""
 
 DIALOGUE_RULES = """THE FORMAT: a deadpan comedy short about living with AI tools. A person (character a) sits at her desk with
 her AI (character b, a small creature on the desk; in group episodes more AIs, c and d, sit beside it). No narrator:
@@ -267,7 +282,11 @@ Rules (an app checks them and sends the script back if one breaks):
 13. TITLE: all lowercase, no tags: two short mirrored sentences about the premise, then one question to the viewer
    ("one asks four questions. one asks none. which one are you working with today?"). At most 110 characters.
 14. Insider humour for the niche is good (a known quirk of AI tools, a developer's habit), but never mock a real,
-   named person, keep it kind, and write new lines: never reuse another creator's script."""
+   named person, keep it kind, and write new lines: never reuse another creator's script.
+15. LENGTH: the finished video runs exactly as long as the lines (clips end when the talking ends), so the line count
+   sets the length. Write the number of lines asked for below; a script that is too short makes a short video.
+
+""" + PLAIN_FUNNY
 
 
 def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: str, profile_summary: list[str],
@@ -276,7 +295,9 @@ def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: s
     a, b = cast["a"], cast["b"]
     extra = [s for s in ("c", "d") if (cast.get(s) or {}).get("enabled")]
     who = ["a", "b", *extra]
-    n_lines = (max(4, round(duration / 3.2)), round(duration / 1.9))
+    from ..dialogue import target_lines
+    n_lines = target_lines(duration)
+    words_total = round((duration - 2.1 - n_lines[0] * 0.45) * wpm / 60)
     revision = ""
     if revise:
         revision = f"""
@@ -287,8 +308,9 @@ FLAGS:
     extras = "".join(f"- {s} = {cast[s]['name']}: {cast[s]['role']}\n" for s in extra)
     speaker_enum = " | ".join(f'"{s}"' for s in who)
     prompt = f"""Use the `ig-reel` skill's voice rules (and `ig-human` to avoid machine-sounding lines) to write a
-{duration}-second dialogue short, about {n_lines[0]}-{n_lines[1]} lines (it is spoken at about {wpm:.0f} words a minute
-with half-second turns, in {duration // 10} clips of up to 10 s).
+{duration}-second dialogue short.
+TARGET LENGTH: {duration} s = {n_lines[0]}-{n_lines[1]} lines, about {words_total} spoken words in total (spoken at about
+{wpm:.0f} words a minute with half-second turns, in {duration // 10} clips of up to 10 s). Fewer lines make a shorter video.
 
 {DIALOGUE_RULES}
 
@@ -377,32 +399,97 @@ APPROVED PHASE A:
 
 # ---- packaging and learn --------------------------------------------------------------------
 
+def _cover_spec(ratio: str) -> str:
+    if ratio == "9:16":
+        return ("a VERTICAL 9:16 cover, 1080x1920 (YouTube Shorts and Instagram Reels cover). Instagram's profile grid crops "
+                "it to the centre square (1080x1080, about 4:5 on newer grids), so the faces and any text sit in the middle "
+                "third; keep the top 15% and bottom 25% free of anything important (the app buttons cover them)")
+    return ("a HORIZONTAL 16:9 YouTube thumbnail, 1280x720; keep the bottom-right corner clear (the length badge covers "
+            "it) and make it read at phone size")
+
+
+PACKAGE_RULES = """HARD RULES FOR EVERYTHING YOU WRITE HERE:
+- Describe only what is in the script below. Never invent events, props, timers, lengths, numbers or results.
+- Never state how long the video is unless you use the exact length given (VIDEO LENGTH below).
+- No links, URLs or placeholders ("example.com", "[link]", "link in bio") anywhere.
+- TIMESTAMPS / CHAPTERS: only when the video is long-form and at least 60 s AND draft chapters are given; then use
+  exactly those times. For a short (under 60 s) write no timestamps at all.
+- The description of a short: 2-4 short lines (the first line works as the search snippet and the hook), then
+  3-5 hashtags on the last line. Nothing else.
+- PINNED COMMENT: what the creator posts as the first comment right after publishing, to pin: one short, funny line
+  in the creator's voice that invites replies (a question viewers want to answer, or a "tell me yours"), under 200
+  characters, no links, no hashtags, at most one emoji.
+- COVER PROMPT: one paragraph to paste into an image generator (Midjourney, Ideogram, DALL-E) for {cover}. Describe
+  the frame from the video (the characters, the set and the light below), the moment that sells the joke, the facial
+  expressions, and the 1-3 word cover text with where it sits and its style (bold, high contrast, readable small).
+  Say "no logos, no watermark". Never name a real brand's logo or ask for one."""
+
+
 def package(title: str, narration: str, topic: dict, hook: dict, duration: int, platforms: list[str],
-            chapters: list[dict]) -> AgentTask:
+            chapters: list[dict], actual_seconds: float | None = None, ratio: str = "9:16", look: str = "") -> AgentTask:
+    seconds = actual_seconds or duration
+    short = seconds < 60
     prompt = f"""Package this finished video. Use these skills in order and follow their rules:
 - `yt-package`: ten titles (the app lints them with title.py) and three thumbnail texts of at most 3 words that do not repeat the title, plus a thumbnail brief.
-- `yt-seo`: the description (first two lines are the search snippet), up to 15 disambiguation tags, and the three queries this should win.
-- `yt-chapters`: retitle the draft chapters below as 3-5 word promises (only if duration >= 60s and long-form).
+- `yt-seo`: the description (first line is the search snippet), up to 15 disambiguation tags, and the three queries this should win.
+- `yt-chapters`: {"none: this is a short, return chapter_titles []" if short or not chapters else "retitle the draft chapters below as 3-5 word promises"}.
 - `ig-caption`: a Job A caption (the reel carries the hook), one ask, up to 5 specific hashtags, 2-3 search phrases.
 - `yt-shorts` / `ig-repurpose`: cut-down suggestions (only meaningful for long-form; return [] for a short).
+Also write the pinned comment and the cover prompt.
 Voice: {VOICE_YT} and {VOICE_IG}. Never invent numbers. Never publish anything.
+
+{PACKAGE_RULES.format(cover=_cover_spec(ratio))}
+
+{PLAIN_FUNNY}
 
 TITLE (working): {title}
 PLATFORMS: {platforms}
-DURATION: {duration}s
+VIDEO LENGTH: {seconds:.0f} s ({"a short" if short else "long-form"}), aspect ratio {ratio}
+LOOK OF THE VIDEO: {look or "see the script"}
 TOPIC: {_j(topic)}
 HOOK: {_j(hook)}
-NARRATION:
+SCRIPT (what is actually said, in order):
 {narration}
-DRAFT CHAPTERS (chapters.py): {_j(chapters)}"""
+DRAFT CHAPTERS (chapters.py): {_j([] if short else chapters)}"""
     schema = _obj({"titles": _arr(STR, 3), "thumbnail_text": _arr(STR, 1), "thumbnail_brief": STR,
                    "description": STR, "tags": _arr(STR), "queries": _arr(STR), "chapter_titles": _arr(STR),
-                   "ig_caption": STR, "ig_keywords": _arr(STR),
+                   "ig_caption": STR, "ig_keywords": _arr(STR), "pinned_comment": STR, "cover_prompt": STR,
                    "cutdowns": _arr(_obj({"start": NUM, "end": NUM, "first_line": STR, "on_screen": STR, "loop_point": STR}))})
     return AgentTask("package", prompt, schema, ["yt-package", "yt-seo", "yt-chapters", "ig-caption", "yt-shorts",
                                                  "ig-repurpose"], "direction",
                      {"title": title, "narration": narration, "topic": topic, "hook": hook, "duration": duration,
-                      "platforms": platforms, "chapters": chapters})
+                      "platforms": platforms, "chapters": chapters, "actual_seconds": actual_seconds, "ratio": ratio, "look": look})
+
+
+PACKAGE_PARTS = {"description": ("yt-seo", "the YouTube description"), "pinned_comment": ("yt-comment", "the pinned comment"),
+                 "cover_prompt": ("yt-package", "the cover prompt"), "ig_caption": ("ig-caption", "the Instagram caption")}
+
+
+def package_part(part: str, previous: str, note: str, title: str, narration: str, seconds: float, ratio: str,
+                 look: str = "") -> AgentTask:
+    """A fresh version of one piece of the package (the creator asked to regenerate it)."""
+    skill, what = PACKAGE_PARTS[part]
+    prompt = f"""Use the `{skill}` skill. Write a NEW version of {what} for this finished video: clearly different from
+the previous version below (a new angle or a new joke), not a light edit of it.
+{f"The creator asks: {note}" if note.strip() else ""}
+Voice: {VOICE_YT} and {VOICE_IG}. Never publish anything.
+
+{PACKAGE_RULES.format(cover=_cover_spec(ratio))}
+
+{PLAIN_FUNNY}
+
+TITLE: {title}
+VIDEO LENGTH: {seconds:.0f} s ({"a short" if seconds < 60 else "long-form"}), aspect ratio {ratio}
+LOOK OF THE VIDEO: {look or "see the script"}
+SCRIPT (what is actually said, in order):
+{narration}
+PREVIOUS VERSION (do not repeat it):
+{previous}
+
+Return {{"text": "<the new {what}>"}}."""
+    return AgentTask("package_part", prompt, _obj({"text": STR}), [skill], "direction",
+                     {"part": part, "previous": previous, "note": note, "title": title, "narration": narration,
+                      "seconds": seconds, "ratio": ratio, "look": look})
 
 
 def learn_read(retention: dict | None, ig_insights: str, plan: list[dict], duration: float) -> AgentTask:

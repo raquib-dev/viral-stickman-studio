@@ -146,6 +146,24 @@ def line_seconds(text: str, wpm: float) -> float:
     return max(0.55, words(text) / (wpm / 60) + 0.15 + 0.25 * stretched)
 
 
+END_HOLD = 1.7          # the final wide's pull-back after the last word (Settings → Dialogue shorts)
+SECONDS_PER_LINE = 2.3  # a short performed line plus its turn, on average: what a target length needs
+
+
+def estimate_seconds(lines: list[dict], wpm: float, end_hold: float = END_HOLD) -> float:
+    """How long the finished video runs: clips end with their talk, so the length is the lines themselves (speech
+    and the turns between them), the opening lead and the closing pull-back."""
+    if not lines:
+        return 0.0
+    return (LEAD + sum(line_seconds(ln.get("text", ""), wpm) for ln in lines)
+            + sum(GAPS[timing_of(ln)] for ln in lines[1:]) + end_hold)
+
+
+def target_lines(duration: int) -> tuple[int, int]:
+    """How many lines a video of `duration` seconds needs (short lines; the reference reels run 26-40 in 41-57 s)."""
+    return max(4, round(duration / 2.6)), max(6, round(duration / 1.8))
+
+
 def _load(secs: list[float], timings: list[str], i: int, j: int) -> float:
     """Seconds lines i..j-1 take inside one clip: speech plus the silences before lines 2..n of the clip."""
     return sum(secs[i:j]) + sum(GAPS[timings[k]] for k in range(i + 1, j))
@@ -331,6 +349,12 @@ def dialogue_flags(res: dict, cast: dict, hook_say: str, duration: int, wpm: flo
         flags.append("no delivery tags in the title")
     if n and title and len(set(_content(title)) & set().union(*(set(_content(ln.get("text", ""))) for ln in lines))) < 2:
         flags.append("the title should quote the script (share at least two of its words)")
+    if n and duration >= 20:
+        est = estimate_seconds(lines, wpm)
+        if est < 0.85 * duration:
+            more = max(2, math.ceil((0.95 * duration - est) / SECONDS_PER_LINE))
+            flags.append(f"the lines run about {est:.0f}s but the video is set to {duration}s: add about {more} more short lines "
+                         "(a new exchange or two before the turn), so the video fills its length")
     if n and group_lines(lines, duration // 10, wpm) is None:
         est = sum(line_seconds(ln.get("text", ""), wpm) for ln in lines) + sum(GAPS[timing_of(ln)] for ln in lines[1:])
         flags.append(f"the lines do not fit {duration // 10} clips of 10 s (about {est:.0f}s of speech and gaps; "

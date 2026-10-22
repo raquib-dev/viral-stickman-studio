@@ -61,7 +61,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <NavLink to="/settings" className={({ isActive }) => `rounded-lg px-2 py-1.5 text-sm ${isActive ? "bg-surface font-semibold" : "text-ink-2 hover:bg-surface-3"}`} data-testid="nav-settings">⚙ Settings</NavLink>
           {dry === false && mode && (
             <span className="text-center text-[11px] text-ink-3" data-testid="mode-detail">
-              writing: {mode.agent_provider === "claude" ? "Claude API" : mode.agent_provider === "local" ? "local LLM" : "hybrid"}<br />
+              writing: {({ claude: "Claude API", local: "local LLM", hybrid: "Claude + local", groq: "Groq", "hybrid-groq": "Claude + Groq" } as Record<string, string>)[mode.agent_provider] ?? mode.agent_provider}<br />
               video: {mode.render_backend.startsWith("local-") ? `${mode.render_backend} ($0)` : mode.render_backend}
             </span>
           )}

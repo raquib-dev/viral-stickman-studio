@@ -143,12 +143,12 @@ class FixtureAgent:
 
 
 class HybridAgent:
-    """Claude for direction (the hardest, highest-leverage writing), the local model for the rest."""
-    kind = "hybrid (Claude direction + local LLM)"
+    """Claude for direction (the hardest, highest-leverage writing), the local model (or Groq) for the rest."""
 
-    def __init__(self, settings: dict):
-        from .local import LocalAgent
-        self.claude, self.local = SdkAgent(settings), LocalAgent(settings)
+    def __init__(self, settings: dict, writer: str = "local"):
+        from .local import GroqAgent, LocalAgent
+        self.claude, self.local = SdkAgent(settings), (GroqAgent if writer == "groq" else LocalAgent)(settings)
+        self.kind = f"hybrid (Claude direction + {self.local.kind})"
 
     async def run(self, task: AgentTask, ctx) -> dict:
         return await (self.claude if task.model_key == "direction" else self.local).run(task, ctx)
@@ -161,6 +161,11 @@ def get_agent(settings: dict):
     if provider == "local":
         from .local import LocalAgent
         return LocalAgent(settings)
+    if provider == "groq":
+        from .local import GroqAgent
+        return GroqAgent(settings)
     if provider == "hybrid":
         return HybridAgent(settings)
+    if provider == "hybrid-groq":
+        return HybridAgent(settings, "groq")
     return SdkAgent(settings)

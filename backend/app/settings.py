@@ -17,7 +17,7 @@ from dotenv import dotenv_values
 
 from .paths import CONFIG, REPO_ROOT
 
-SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FAL_KEY", "YOUTUBE_API_KEY", "ELEVENLABS_API_KEY")
+SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FAL_KEY", "YOUTUBE_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY")
 SETTINGS_FILE = Path(os.environ.get("VSS_SETTINGS_FILE") or CONFIG / "settings.json")
 PRICING_FILE = CONFIG / "pricing.json"
 
@@ -89,6 +89,9 @@ DEFAULTS: dict[str, Any] = {
                   "max_tokens": 8192, "timeout_s": 900, "skill_chars": 14000,
                   # Ollama only (native API): context window, reasoning on/off, how long the model stays loaded
                   "num_ctx": 8192, "think": False, "keep_alive": "5m"},
+        # groq: Groq's hosted OpenAI-compatible API (GROQ_API_KEY). hybrid-groq: Claude for direction, Groq for the rest.
+        "groq": {"base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-120b", "temperature": 0.4,
+                 "max_tokens": 8192, "timeout_s": 300, "skill_chars": 14000},
     },
     "render": {
         "comfyui": {"url": "http://127.0.0.1:8188", "t2v_workflow": "config/comfyui/wan21-t2v-1.3b.json",
@@ -121,7 +124,7 @@ DEFAULTS: dict[str, Any] = {
     "captions": {"whisper_model": "base.en", "whisper_device": "auto"},
 }
 
-AGENT_PROVIDERS = ("claude", "local", "hybrid")
+AGENT_PROVIDERS = ("claude", "local", "hybrid", "groq", "hybrid-groq")
 RENDER_BACKENDS = ("mock", "omni-gemini", "omni-fal", "local-threejs", "local-stickman", "local-comfyui")
 LOCAL_BACKENDS = ("local-threejs", "local-stickman", "local-comfyui")
 TTS_ENGINES = ("auto", "kokoro", "piper", "elevenlabs", "none")
@@ -146,9 +149,11 @@ def validate_settings(s: dict[str, Any]) -> None:
     if s["render"]["backend"] not in RENDER_BACKENDS:
         raise ValueError("unknown render backend")
     if s["agent"]["provider"] not in AGENT_PROVIDERS:
-        raise ValueError("agent provider must be claude, local or hybrid")
+        raise ValueError("agent provider must be one of " + ", ".join(AGENT_PROVIDERS))
     if not str(s["agent"]["local"]["base_url"]).startswith(("http://", "https://")):
         raise ValueError("local LLM URL must start with http:// or https://")
+    if not str(s["agent"]["groq"]["base_url"]).startswith("https://"):
+        raise ValueError("Groq URL must start with https://")
     if s["voice"]["tts"] not in TTS_ENGINES:
         raise ValueError("unknown TTS engine")
     if not 1 <= int(s["agent"]["max_attempts"]) <= 6:

@@ -270,8 +270,8 @@ async def direction_b(ctx) -> dict:
     md = ctx.read_text("direction/phase-a.md")
     approval = {"approved_by": g["decided_by"], "at": time.strftime("%Y-%m-%d %H:%M", time.localtime(g["decided_at"] or time.time())),
                 "note": g.get("note") or "", "phase_a_sha": payload["phase_a_sha"]}
-    # a local model writes direction only in "local" mode (hybrid sends direction to Claude)
-    app_inserts = not ctx.dry_run and ctx.settings.get("agent", {}).get("provider") == "local"
+    # a non-Claude model writes direction only in "local"/"groq" mode (the hybrids send direction to Claude)
+    app_inserts = not ctx.dry_run and ctx.settings.get("agent", {}).get("provider") in ("local", "groq")
     res = await ctx.agent.run(tasks.phase_b(md, a["rows"], p["ratio"], int(p["duration"]), str(p["style"]),
                                             p.get("theme", "dark"), approval, app_inserts), ctx)
     if app_inserts:

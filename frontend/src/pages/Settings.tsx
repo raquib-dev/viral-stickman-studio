@@ -95,10 +95,11 @@ export default function Settings() {
       <Section title="Writing model (research, scripts, direction)">
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm">Provider<select className="input" value={s.agent.provider} onChange={(e) => set(["agent", "provider"], e.target.value)} data-testid="agent-provider">
-            <option value="claude">Claude API (best quality)</option><option value="hybrid">Hybrid: Claude directs, local writes the rest</option><option value="local">Local LLM only ($0)</option></select></label>
+            <option value="claude">Claude API (best quality)</option><option value="hybrid">Hybrid: Claude directs, local writes the rest</option><option value="local">Local LLM only ($0)</option><option value="hybrid-groq">Hybrid: Claude directs, Groq writes the rest</option><option value="groq">Groq only (hosted, fast)</option></select></label>
           <label className="text-sm">Attempts per task (invalid answers are retried)<input className="input" type="number" min={1} max={6} value={s.agent.max_attempts} onChange={(e) => set(["agent", "max_attempts"], Number(e.target.value))} /></label>
         </div>
-        {s.agent.provider !== "claude" && (
+        {s.agent.provider.endsWith("groq") && <GroqSettings s={s} set={set} />}
+        {(s.agent.provider === "local" || s.agent.provider === "hybrid") && (
           <div className="mt-3 grid gap-3 rounded-lg border border-line p-3 md:grid-cols-3" data-testid="local-llm-settings">
             <label className="text-sm">Server URL (OpenAI-compatible)<input className="input" value={s.agent.local.base_url} onChange={(e) => set(["agent", "local", "base_url"], e.target.value)} /></label>
             <label className="text-sm">Model<input className="input" value={s.agent.local.model} onChange={(e) => set(["agent", "local", "model"], e.target.value)} /></label>
@@ -142,6 +143,26 @@ export default function Settings() {
       {err && <ErrorBox>{err}</ErrorBox>}
     </div>
   );
+}
+
+function GroqSettings({ s, set }: { s: any; set: (path: string[], v: any) => void }) {
+  const [chk, setChk] = useState<any>(null);
+  const g = s.agent.groq;
+  const test = async () => { setChk({ busy: true }); try { setChk(await api.get("/agent/groq/check")); } catch (e: any) { setChk({ ok: false, error: e.message }); } };
+  const num = (key: string, label: string, props: any = {}) => (
+    <label className="text-sm">{label}<input className="input" type="number" {...props} value={g[key]} onChange={(e) => set(["agent", "groq", key], Number(e.target.value))} /></label>);
+  return (
+    <div className="mt-3 grid gap-3 rounded-lg border border-line p-3 md:grid-cols-3" data-testid="groq-settings">
+      <label className="text-sm">Groq model<input className="input" list="groq-models" value={g.model} onChange={(e) => set(["agent", "groq", "model"], e.target.value)} data-testid="groq-model" />
+        <datalist id="groq-models">{(chk?.models ?? ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "moonshotai/kimi-k2-instruct", "llama-3.3-70b-versatile", "qwen/qwen3-32b"]).map((m: string) => <option key={m} value={m} />)}</datalist></label>
+      {num("temperature", "Temperature", { min: 0, max: 1.5, step: 0.1 })}
+      {num("max_tokens", "Max output tokens")}
+      {num("timeout_s", "Timeout per call (s)")}
+      {num("skill_chars", "Skill text per prompt (characters)", { step: 1000 })}
+      <div className="flex items-end gap-2"><button className="btn" type="button" onClick={test} data-testid="groq-test">Test Groq key</button>
+        {chk && !chk.busy && <span className="text-xs">{chk.ok ? `✓ key works · ${chk.models.length} models${chk.model_present ? "" : ` · ${g.model} not available to this key`}` : `✗ ${chk.error}`}</span>}</div>
+      <p className="text-xs text-ink-3 md:col-span-3">Needs <code>GROQ_API_KEY</code> in <code>.env</code> (https://console.groq.com/keys; restart the app after adding it). Groq runs open models on its own hardware through an OpenAI-compatible API: very fast, billed per token on paid plans, rate-limited on the free tier (the app waits and retries on 429). Use a model with structured outputs (gpt-oss, Kimi K2) for the most reliable JSON; others fall back to JSON mode. If you get HTTP 413 on the free tier, lower Skill text per prompt.{s.agent.provider === "hybrid-groq" ? " Hybrid sends Phase A/B direction to Claude and everything else to Groq." : ""}</p>
+    </div>);
 }
 
 function ElevenLabsVoice({ s, set }: { s: any; set: (path: string[], v: any) => void }) {

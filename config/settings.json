@@ -1,18 +1,109 @@
 {
-  "dry_run": true,
-  "models": { "direction": "claude-opus-5-5", "research": "claude-opus-5-5", "labeling": "claude-sonnet-5-5" },
-  "agent_budget_per_stage_usd": 2.0,
+  "agent": {
+    "provider": "claude",
+    "max_attempts": 3,
+    "local": {
+      "base_url": "http://localhost:11434/v1",
+      "model": "qwen3:8b",
+      "temperature": 0.4,
+      "max_tokens": 8192,
+      "timeout_s": 900,
+      "skill_chars": 14000,
+      "num_ctx": 8192,
+      "think": false,
+      "keep_alive": "5m"
+    },
+    "groq": {
+      "base_url": "https://api.groq.com/openai/v1",
+      "model": "openai/gpt-oss-120b",
+      "temperature": 0.4,
+      "max_tokens": 8192,
+      "timeout_s": 300,
+      "skill_chars": 14000
+    }
+  },
   "render": {
+    "comfyui": {
+      "url": "http://127.0.0.1:8188",
+      "t2v_workflow": "config/comfyui/wan21-t2v-1.3b.json",
+      "i2v_workflow": "",
+      "timeout_s": 1800,
+      "poll_s": 3,
+      "negative": "photorealistic, 3D render, shading, gradients, texture, colorful background, blurry, low quality, jpeg artifacts, deformed body, extra limbs, extra fingers, missing limbs, fused limbs, multiple heads, text, letters, subtitles, watermark, logo, flicker, jittery motion, static frame",
+      "steps": 30,
+      "cfg": 6,
+      "shift": 8,
+      "fill": "smooth",
+      "gen_long_side": 832,
+      "gen_short_side": 480,
+      "frames": 81,
+      "fps": 16
+    },
+    "stickman": {
+      "fps": 24
+    },
+    "threejs": {
+      "fps": 24,
+      "quality": "high",
+      "browser_channel": "",
+      "browser_path": "",
+      "style": "auto",
+      "mood": "auto",
+      "animation_pack": "auto"
+    },
     "backend": "mock",
     "resolution": "720p",
     "continuity": "first_frame",
     "max_retries": 2,
-    "budget_cap_usd": 10.0
+    "budget_cap_usd": 10
   },
-  "gates": { "topic": "pause", "hook": "pause", "phase_a": "pause", "render_cost": "pause" },
-  "topic_weights": { "outlier_evidence": 0.35, "gap": 0.25, "stickman_fit": 0.20, "niche_fit": 0.20 },
+  "voice": {
+    "tts": "auto",
+    "kokoro_voice_male": "am_michael",
+    "kokoro_voice_female": "af_heart",
+    "piper_model": "",
+    "max_speedup": 1.3,
+    "elevenlabs_voice_male": "pNInz6obpgDQGcFmaJgB",
+    "elevenlabs_voice_female": "21m00Tcm4TlvDq8ikWAM",
+    "elevenlabs_model": "eleven_multilingual_v2",
+    "elevenlabs_stability": 0.5,
+    "elevenlabs_similarity": 0.75,
+    "elevenlabs_style": 0
+  },
+  "captions": {
+    "whisper_model": "base.en",
+    "whisper_device": "auto",
+    "enabled": true,
+    "words_per_page": 3
+  },
+  "dry_run": true,
+  "models": {
+    "direction": "claude-opus-5-5",
+    "research": "claude-opus-5-5",
+    "labeling": "claude-sonnet-5-5"
+  },
+  "agent_budget_per_stage_usd": 2,
+  "gates": {
+    "topic": "pause",
+    "hook": "pause",
+    "phase_a": "pause",
+    "render_cost": "pause"
+  },
+  "topic_weights": {
+    "outlier_evidence": 0.35,
+    "gap": 0.25,
+    "stickman_fit": 0.2,
+    "niche_fit": 0.2
+  },
   "speaking_wpm": 150,
-  "discovery": { "videos_per_channel": 30, "max_channels": 12, "yt_min_multiple": 2.0, "ig_signal_multiple": 3.0 },
-  "captions": { "enabled": true, "words_per_page": 3 },
-  "loudness": { "integrated_lufs": -16.0, "true_peak_db": -1.0 }
+  "discovery": {
+    "videos_per_channel": 30,
+    "max_channels": 12,
+    "yt_min_multiple": 2,
+    "ig_signal_multiple": 3
+  },
+  "loudness": {
+    "integrated_lufs": -16,
+    "true_peak_db": -1
+  }
 }

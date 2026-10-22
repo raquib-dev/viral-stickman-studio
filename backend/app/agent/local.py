@@ -7,6 +7,7 @@ schema; an invalid result is retried with the validation errors fed back.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -66,15 +67,29 @@ def build_messages(task: AgentTask, cfg: dict) -> list[dict]:
 
 class LocalAgent:
     kind = "local LLM"
+    cfg_key = "local"       # settings["agent"][cfg_key]
+    label = "local LLM"
+    cost_note = "$0"
+    native_ollama = True    # probe for Ollama's native API
 
     def __init__(self, settings: dict, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
-        self.cfg = settings["agent"]["local"]
+        self.cfg = settings["agent"][self.cfg_key]
         self._transport = transport  # tests inject a fake server
+
+    def _headers(self) -> dict:
+        return {}
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(base_url=self.cfg["base_url"].rstrip("/"), timeout=float(self.cfg.get("timeout_s", 900)),
-                                 transport=self._transport)
+                                 transport=self._transport, headers=self._headers())
+
+    def _not_found(self) -> str:
+        return f"model {self.cfg['model']!r} not found on the local server (Ollama: `ollama pull {self.cfg['model']}`)"
+
+    def _unreachable(self, e: Exception) -> str:
+        return (f"cannot reach the local LLM at {self.cfg['base_url']} ({type(e).__name__}). "
+                "Start Ollama / LM Studio, or check the URL in Settings → Writing model.")
 
     async def _is_ollama(self, http: httpx.AsyncClient) -> str | None:
         """Ollama's version when the server is Ollama. Its native API takes the context size per call; the
@@ -114,12 +129,12 @@ class LocalAgent:
         fmt: dict | None = {"type": "json_schema", "json_schema": {"name": task.name, "schema": task.schema}}
         last: Exception | None = None
         async with self._client() as http:
-            native = await self._is_ollama(http)
+            native = await self._is_ollama(http) if self.native_ollama else None
             if native:
                 ctx.log(f"agent[{task.name}] Ollama {native}: native API, context {int(self.cfg.get('num_ctx', 8192))} tokens")
             for attempt in range(1, attempts + 1):
                 ctx.check_cancelled()
-                ctx.log(f"agent[{task.name}] local model={self.cfg['model']} attempt {attempt}/{attempts}")
+                ctx.log(f"agent[{task.name}] {self.label} model={self.cfg['model']} attempt {attempt}/{attempts}")
                 if native:
                     t0 = time.time()
                     try:
@@ -149,25 +164,37 @@ class LocalAgent:
                 try:
                     r = await http.post("/chat/completions", json=body)
                 except httpx.HTTPError as e:
-                    raise AgentError(f"cannot reach the local LLM at {self.cfg['base_url']} ({type(e).__name__}). "
-                                     "Start Ollama / LM Studio, or check the URL in Settings → Writing model.") from e
+                    raise AgentError(self._unreachable(e)) from e
                 if r.status_code == 400 and fmt and fmt["type"] == "json_schema":
-                    # older servers reject json_schema; fall back to plain JSON mode and keep the attempt
-                    ctx.log("local server rejected json_schema output; falling back to JSON mode", "warn")
+                    # older servers (and models without structured outputs) reject json_schema: plain JSON mode
+                    ctx.log(f"{self.label} rejected json_schema output; falling back to JSON mode", "warn")
                     fmt = {"type": "json_object"}
                     r = await http.post("/chat/completions", json={**body, "response_format": fmt})
+                waits = 0
+                while r.status_code == 429 and waits < 3:
+                    # rate limited (hosted APIs): wait as told, without spending an attempt
+                    wait = min(60.0, float(r.headers.get("retry-after") or 10 * (waits + 1)))
+                    ctx.log(f"agent[{task.name}] {self.label} rate limit; waiting {wait:.0f}s", "warn")
+                    await asyncio.sleep(wait)
+                    ctx.check_cancelled()
+                    waits += 1
+                    r = await http.post("/chat/completions", json={**body, **({"response_format": fmt} if fmt else {})})
+                if r.status_code in (401, 403):
+                    raise AgentError(f"{self.label} HTTP {r.status_code}: the API key was refused ({r.text[:200]})")
                 if r.status_code == 404:
-                    raise AgentError(f"model {self.cfg['model']!r} not found on the local server "
-                                     f"(Ollama: `ollama pull {self.cfg['model']}`)")
+                    raise AgentError(self._not_found())
+                if r.status_code == 413:
+                    raise AgentError(f"{self.label} HTTP 413: the prompt is larger than this model/plan allows per request. "
+                                     "Lower Skill text per prompt in Settings → Writing model, or pick a model with a higher limit.")
                 if r.status_code >= 400:
-                    last = AgentError(f"local LLM HTTP {r.status_code}: {r.text[:300]}")
+                    last = AgentError(f"{self.label} HTTP {r.status_code}: {r.text[:300]}")
                     ctx.log(f"agent[{task.name}] {last}", "warn")
                     continue
                 d = r.json()
                 text = (d.get("choices") or [{}])[0].get("message", {}).get("content") or ""
                 usage = d.get("usage") or {}
                 ctx.log(f"agent[{task.name}] reply in {time.time() - t0:.1f}s, "
-                        f"{usage.get('prompt_tokens', '?')} in / {usage.get('completion_tokens', '?')} out tokens, $0", "agent")
+                        f"{usage.get('prompt_tokens', '?')} in / {usage.get('completion_tokens', '?')} out tokens, {self.cost_note}", "agent")
                 try:
                     data = extract_json(text)
                     _validate(task, data)
@@ -178,7 +205,30 @@ class LocalAgent:
                     messages = [*messages, {"role": "assistant", "content": text[:4000]},
                                 {"role": "user", "content": f"That result was invalid: {e}. Reply again with ONLY the "
                                                             "corrected JSON that matches the schema exactly."}]
-        raise AgentError(f"{task.name}: local model gave no valid result after {attempts} attempt(s): {last}")
+        raise AgentError(f"{task.name}: {self.label} gave no valid result after {attempts} attempt(s): {last}")
+
+
+class GroqAgent(LocalAgent):
+    """Groq's hosted OpenAI-compatible API (https://api.groq.com/openai/v1). Fast open models; GROQ_API_KEY in .env.
+    Groq bills per token on paid plans and rate-limits the free tier; 429s wait and retry without using an attempt."""
+    kind = "Groq"
+    cfg_key = "groq"
+    label = "Groq"
+    cost_note = "billed by Groq per token"
+    native_ollama = False
+
+    def _headers(self) -> dict:
+        from ..settings import secret
+        key = secret("GROQ_API_KEY")
+        if not key:
+            raise AgentError("GROQ_API_KEY is not set in .env (https://console.groq.com/keys)")
+        return {"Authorization": f"Bearer {key}"}
+
+    def _not_found(self) -> str:
+        return f"Groq has no model {self.cfg['model']!r} (or your key cannot use it): see https://console.groq.com/docs/models"
+
+    def _unreachable(self, e: Exception) -> str:
+        return f"cannot reach Groq at {self.cfg['base_url']} ({type(e).__name__}). Check your internet connection."
 
 
 class _Retry(Exception):
@@ -201,6 +251,23 @@ async def unload(settings: dict, log) -> None:
                 log(f"unloaded {cfg['model']} from Ollama to free GPU memory for the render")
     except Exception:
         pass  # not Ollama, or not running: nothing to free
+
+
+async def groq_models(cfg: dict, transport=None) -> dict:
+    """The models this Groq key can use (GET /models), for Settings → Writing model → Test Groq."""
+    from ..settings import secret
+    key = secret("GROQ_API_KEY")
+    if not key:
+        return {"ok": False, "error": "GROQ_API_KEY is not set in .env"}
+    try:
+        async with httpx.AsyncClient(timeout=15, transport=transport) as http:
+            r = await http.get(cfg["base_url"].rstrip("/") + "/models", headers={"Authorization": f"Bearer {key}"})
+    except httpx.HTTPError as e:
+        return {"ok": False, "error": f"cannot reach Groq ({type(e).__name__})"}
+    if r.status_code != 200:
+        return {"ok": False, "error": f"Groq HTTP {r.status_code}" + (": the API key was refused" if r.status_code in (401, 403) else "")}
+    ids = sorted(m.get("id") for m in r.json().get("data", []) if m.get("active", True))
+    return {"ok": True, "models": ids, "model_present": cfg["model"] in ids}
 
 
 async def status(base_url: str, timeout: float = 4.0) -> dict:

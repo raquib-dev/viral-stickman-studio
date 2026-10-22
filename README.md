@@ -100,6 +100,7 @@ You only need the keys for the parts you run live.
 | `FAL_KEY` | `omni-fal` render backend | https://fal.ai/dashboard/keys → Add key |
 | `GEMINI_API_KEY` | `omni-gemini` render backend | https://aistudio.google.com/apikey. Omni Flash needs the **paid tier** (enable billing on that Google Cloud project). |
 | `YOUTUBE_API_KEY` | Live YouTube discovery (search, stats, channel medians) | See below |
+| `GROQ_API_KEY` | Optional Groq writing model (Settings → Writing model → **Groq only** or **Hybrid: Claude directs, Groq writes the rest**) | https://console.groq.com/keys. Free tier is rate-limited; paid plans bill per token. |
 | `ELEVENLABS_API_KEY` | Optional ElevenLabs voiceover for local video (Settings → Voice → ElevenLabs) | https://elevenlabs.io → Developers → API Keys. Billed per character on your ElevenLabs plan. |
 
 ### Get a YouTube Data API key (about 5 minutes, free)
@@ -174,7 +175,7 @@ The sidebar shows **LOCAL ($0)** when both writing and video run locally.
 
 | Piece | API option | Local option | Setting |
 |---|---|---|---|
-| Writing (research, scripts, direction) | Claude Agent SDK | Any OpenAI-compatible server: **Ollama** or LM Studio with `qwen3:8b` (about 5 GB, fits 8 GB VRAM). **Hybrid** keeps Claude for Phase A/B only | Writing model → Provider |
+| Writing (research, scripts, direction) | Claude Agent SDK | Any OpenAI-compatible server: **Ollama** or LM Studio with `qwen3:8b` (about 5 GB, fits 8 GB VRAM). **Hybrid** keeps Claude for Phase A/B only. Or hosted: **Groq** (`GROQ_API_KEY`, OpenAI-compatible, e.g. `openai/gpt-oss-120b`), alone or as **Hybrid: Claude + Groq** | Writing model → Provider |
 | Video | omni-fal, omni-gemini | **local-stickman**: built-in animator, needs only ffmpeg + Pillow, about 8 s per clip on a laptop CPU. **local-comfyui**: Wan 2.1 1.3B / LTX-Video in ComfyUI on your GPU | Render → Backend |
 | Voiceover (local video only; Omni speaks on its own) | **ElevenLabs** (`ELEVENLABS_API_KEY`; pick voices with "Load my voices"; falls back to Kokoro/Piper if a call fails) | **Kokoro-82M** (`pip install kokoro soundfile`, Apache-2.0) or **Piper** (`pip install piper-tts` + a voice `.onnx`, MIT) | Voice and captions |
 | Caption timing | — | faster-whisper, on the GPU when CTranslate2 sees CUDA | Voice and captions |

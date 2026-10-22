@@ -146,6 +146,13 @@ async def elevenlabs_voices() -> dict:
         raise HTTPException(502, f"ElevenLabs: {type(e).__name__}: {str(e)[:200]}")
 
 
+@app.get("/api/agent/groq/check")
+async def groq_check() -> dict:
+    """Is GROQ_API_KEY accepted, and which models can it use. The key never leaves the server."""
+    from .agent.local import groq_models
+    return await groq_models(load_settings()["agent"]["groq"])
+
+
 @app.get("/api/local/status")
 async def local_status() -> dict:
     """Which local AI pieces are reachable/installed, for Settings → Local services."""

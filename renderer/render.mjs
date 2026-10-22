@@ -42,7 +42,10 @@ const url = `http://127.0.0.1:${server.address().port}/index.html`;
 const executablePath = process.env.VSS_BROWSER_PATH || undefined;
 const channel = executablePath ? undefined : (process.env.VSS_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : undefined));
 const browser = await chromium.launch({ headless: true, channel, executablePath,
-  args: ["--ignore-gpu-blocklist", "--enable-gpu-rasterization", "--enable-unsafe-swiftshader", "--disable-background-timer-throttling"] });
+  // force_high_performance_gpu: on laptops with two GPUs (Intel + NVIDIA/AMD) use the discrete one, not the
+  // power-saving one Windows hands to apps by default
+  args: ["--ignore-gpu-blocklist", "--enable-gpu-rasterization", "--enable-unsafe-swiftshader", "--disable-background-timer-throttling",
+    "--force_high_performance_gpu"] });
 const t0 = Date.now();
 let ff;
 try {

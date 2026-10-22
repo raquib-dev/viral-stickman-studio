@@ -31,6 +31,19 @@ export function NicheForm({ initial, submitLabel, onSubmit, busy }: {
           <input className="input" value={d.subtopics.join(", ")} onChange={(e) => set("subtopics", e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></div>
       </div>
       <div className="grid gap-4 md:grid-cols-4">
+        <div className="md:col-span-2"><label className="label">Video format</label>
+          <select className="input" value={d.format ?? "narrated"} onChange={(e) => set("format", e.target.value)} data-testid="f-format">
+            <option value="narrated">Narrated stickman explainer (one narrator)</option>
+            <option value="dialogue">Dialogue short (a person and a mascot talk, 3D, cut per line)</option></select></div>
+        {d.format === "dialogue" && <>
+          <div><label className="label">Person's name (character a)</label>
+            <input className="input" value={d.cast?.a?.name ?? "Mia"} onChange={(e) => set("cast", { ...d.cast, a: { ...d.cast?.a, name: e.target.value } })} data-testid="f-cast-a" /></div>
+          <div><label className="label">Mascot's name (character b)</label>
+            <input className="input" value={d.cast?.b?.name ?? "Claude"} onChange={(e) => set("cast", { ...d.cast, b: { ...d.cast?.b, name: e.target.value } })} data-testid="f-cast-b" /></div>
+          <p className="text-xs text-ink-3 md:col-span-4">Looks, voices and roles are on the Render page (Cast). Dialogue shorts render with Settings → Render → <b>local-threejs</b>.</p>
+        </>}
+      </div>
+      <div className="grid gap-4 md:grid-cols-4">
         <div className="md:col-span-2"><span className="label">Target platforms</span>
           <div className="flex flex-wrap gap-3">{PLATFORMS.map(([id, l]) => (
             <label key={id} className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={d.platforms.includes(id)} onChange={() => togglePlat(id)} />{l}</label>))}

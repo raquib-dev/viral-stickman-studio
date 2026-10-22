@@ -19,7 +19,8 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import catalog from "../catalog.json";
 import { buildLights, buildSet } from "./env.js";
 import { ASSET_COLORS, ASSET_MOTIONS, ASSET_SHAPES, PROPS, animateProp, buildProp, propMaterials } from "./props.js";
-import { CLIPS, EXPRESSIONS, GESTURES, HATS, Stickman, loadPack, loadRig } from "./rig.js";
+import { MASCOT_SHAPES, Mascot } from "./mascot.js";
+import { CLIPS, EXPRESSIONS, GESTURES, GLASSES, HAIR_STYLES, HATS, Stickman, loadPack, loadRig } from "./rig.js";
 import { MOODS, SKILL_STYLE, STYLES, mixPalette, resolvePalette } from "./styles.js";
 import { clamp, ease, lerp, noise1, segment, stepFade } from "./util.js";
 import { LEGACY_THEMES, animateElement, badge, panel } from "./world.js";
@@ -98,9 +99,12 @@ async function load(spec) {
   // optional humanoid animation pack: more human locomotion; absent -> the base rig only
   const pack = spec.pack === false ? null : await loadPack(spec.pack_url ?? "./models/anim-pack.glb");
   const actors = (spec.actors ?? []).map((a, i) => {
-    const s = new Stickman(gltf, { SkeletonUtils, color: a.color ?? `#${pal0.ink.getHexString()}`, seed: (spec.seed ?? 1) + i * 17,
-      material: style.char.material, roughness: style.char.roughness, hat: a.hat, hatColor: a.hat_color, limbs: a.limbs ?? spec.limbs,
-      pack });
+    const seed = (spec.seed ?? 1) + i * 17;
+    // kind: the classic stick figure, a stylised person (chibi), or the mascot; appearance comes from the plan
+    const s = a.kind === "mascot" ? new Mascot({ seed, appearance: a.appearance })
+      : new Stickman(gltf, { SkeletonUtils, color: a.color ?? `#${pal0.ink.getHexString()}`, seed,
+        material: style.char.material, roughness: style.char.roughness, hat: a.hat, hatColor: a.hat_color, limbs: a.limbs ?? spec.limbs,
+        pack, build: a.kind === "chibi" ? "chibi" : "stick", appearance: a.appearance });
     scene.add(s.group);
     return { spec: a, rig: s, id: a.id ?? `actor${i}` };
   });
@@ -195,7 +199,13 @@ const SHOTS = {
 function headOf(id, at) {
   const a = state.actors.find((x) => x.id === id) ?? state.actors[0];
   if (!a) return new THREE.Vector3(0, 1.6, 0);
-  return actorMotion(a, at).pos.add(new THREE.Vector3(0, 1.62, 0));
+  return actorMotion(a, at).pos.add(new THREE.Vector3(0, a.rig.headY ?? 1.62, 0));
+}
+
+/** How big an actor is relative to the stick figure (shots frame a small mascot from much closer). */
+function sizeOf(id) {
+  const a = state.actors.find((x) => x.id === id) ?? state.actors[0];
+  return a?.rig.size ?? 1;
 }
 
 /** A camera key as concrete {pos, look, fov}: explicit, or a named shot that follows its target. */
@@ -227,11 +237,15 @@ function resolveKey(key, t) {
     return { pos, look: to, fov: 34 };
   }
   const head = headOf(ids[0], t);
+  // shot numbers are for a 1.62 m stick figure standing on the floor: scale them to the subject's size and
+  // measure heights from its head, so a seated person or a mascot on a desk is framed the same way
+  const k = sizeOf(ids[0]), REF = 1.62;
+  const d = dist * k * num(s.push_k, 0.5, 1, 1);
   const base = head.clone().setY(0);
   const ang = (s.angle ?? 0) + (s.side ?? 0);
-  const pos = base.clone().add(new THREE.Vector3(Math.sin(ang) * dist, camY, Math.cos(ang) * dist));
-  const closeLook = head.y - 0.22;
-  const lookAt = base.clone().add(new THREE.Vector3(0, s.type === "closeup" ? lerp(closeLook, lookY, cardsUp(t)) : lookY, 0));
+  const pos = base.clone().add(new THREE.Vector3(Math.sin(ang) * d, head.y + (camY - REF) * k, Math.cos(ang) * d));
+  const closeLook = head.y - 0.22 * k, wideLook = head.y + (lookY - REF) * k;
+  const lookAt = base.clone().setY(s.type === "closeup" ? lerp(closeLook, wideLook, cardsUp(t)) : wideLook);
   return { pos, look: lookAt, fov };
 }
 
@@ -258,15 +272,39 @@ function cardsUp(t) {
   return w;
 }
 
+/** A cut shot drifting in by `push` over its length (only named shots; explicit cameras slide toward the look). */
+function pushed(key, u) {
+  const p = num(key.push, 0, 0.3, 0) * ease("inOutSine", u);
+  if (!p) return key;
+  if (!key.shot) {
+    const pos = V(key.pos), look = V(key.look);
+    return { ...key, pos: pos.lerp(look, p).toArray() };
+  }
+  const shot = typeof key.shot === "string" ? { type: key.shot } : key.shot;
+  return { ...key, shot: { ...shot, push_k: 1 - p } };
+}
+
 function placeCamera(t) {
   const { spec, camera } = state;
   const keys = spec.camera?.length ? spec.camera : [{ t: 0, shot: "medium" }];
   const sg = segment(keys, t);
-  const k = ease(sg.b.ease ?? "inOutCubic", sg.k);
-  const a = resolveKey(sg.a, t), b = resolveKey(sg.b, t);
-  const pos = a.pos.lerp(b.pos, k), look = a.look.lerp(b.look, k);
-  if (sg.b.orbit) pos.sub(look).applyAxisAngle(new THREE.Vector3(0, 1, 0), sg.b.orbit * k).add(look);
-  camera.fov = lerp(a.fov, b.fov, k);
+  let pos, look;
+  if (sg.b.cut && sg.a !== sg.b) {
+    // the next key is a hard cut: hold this shot until it, with an optional slow push in (`push`, 0..0.3)
+    const span = Math.max(1e-6, sg.b.t - sg.a.t), u = clamp((t - sg.a.t) / span);
+    const a = resolveKey(pushed(sg.a, u), t);
+    pos = a.pos; look = a.look; camera.fov = a.fov;
+  } else if (sg.a.cut && sg.a === sg.b) {
+    const a = resolveKey(pushed(sg.a, clamp((t - sg.a.t) / Math.max(1, (spec.duration ?? 10) - sg.a.t))), t);
+    pos = a.pos; look = a.look; camera.fov = a.fov;
+  } else {
+    const k = ease(sg.b.ease ?? "inOutCubic", sg.k);
+    const a = resolveKey(sg.a, t), b = resolveKey(sg.b, t);
+    pos = a.pos.lerp(b.pos, k); look = a.look.lerp(b.look, k);
+    if (sg.b.orbit) pos.sub(look).applyAxisAngle(new THREE.Vector3(0, 1, 0), sg.b.orbit * k).add(look);
+    camera.fov = lerp(a.fov, b.fov, k);
+  }
+  state.focusPoint = look.clone();
   const shake = num(spec.handheld, 0, 0.03, 0.012);
   pos.x += noise1(t * 0.7, 3) * shake; pos.y += noise1(t * 0.6, 4) * shake;
   camera.position.copy(pos);
@@ -345,7 +383,8 @@ function frame(i) {
   });
   state.elements.forEach((el, k) => animateElement(el, t, k + 1, pal));
   if (state.bokeh) {
-    const target = state.actors[0]?.rig.headWorld() ?? new THREE.Vector3(0, 1.5, 0);
+    // focus where the shot looks (the speaker in a close-up), so the other character falls out of focus
+    const target = state.focusPoint ?? state.actors[0]?.rig.headWorld() ?? new THREE.Vector3(0, 1.5, 0);
     state.bokeh.uniforms.focus.value = state.camera.position.distanceTo(target);
   }
   const u = state.finish.uniforms;
@@ -409,7 +448,8 @@ function frameWithStats(i) {
 function liveCatalog() {
   return { styles: Object.keys(STYLES), moods: Object.keys(MOODS), props: Object.keys(PROPS), gestures: GESTURES, hats: HATS,
     clips: CLIPS, expressions: Object.keys(EXPRESSIONS), shots: [...Object.keys(SHOTS), "two_shot", "over_shoulder"],
-    transitions: ["none", "fade", "iris", "wipe"], asset_shapes: ASSET_SHAPES, asset_colors: ASSET_COLORS, asset_motions: ASSET_MOTIONS };
+    transitions: ["none", "fade", "iris", "wipe"], asset_shapes: ASSET_SHAPES, asset_colors: ASSET_COLORS, asset_motions: ASSET_MOTIONS,
+    kinds: ["stickman", "chibi", "mascot"], mascot_shapes: MASCOT_SHAPES, hair_styles: HAIR_STYLES, glasses: GLASSES };
 }
 
 window.vss = { load, frame, frameWithStats, stats, catalog: liveCatalog, fileCatalog: catalog, get ready() { return true; } };

@@ -28,6 +28,11 @@ class TTSUnavailable(RuntimeError):
     pass
 
 
+def voice_for(v: dict, engine: str, pref: str) -> str:
+    """The engine's voice for "male", "female" or "mascot" (dialogue shorts); an unset mascot voice uses the male one."""
+    return v.get(f"{engine}_voice_{pref}") or v.get(f"{engine}_voice_male") or ""
+
+
 ELEVEN_URL = "https://api.elevenlabs.io/v1"
 
 
@@ -97,7 +102,7 @@ def elevenlabs_say(text: str, out: Path, v: dict, voice_pref: str = "male", log=
     key = secret("ELEVENLABS_API_KEY")
     if not key:
         raise TTSUnavailable("ELEVENLABS_API_KEY is not set in .env")
-    voice = v.get("elevenlabs_voice_female" if voice_pref == "female" else "elevenlabs_voice_male") or "pNInz6obpgDQGcFmaJgB"
+    voice = voice_for(v, "elevenlabs", voice_pref) or "pNInz6obpgDQGcFmaJgB"
     body = {"text": text, "model_id": v.get("elevenlabs_model", "eleven_multilingual_v2"),
             "voice_settings": {"stability": float(v.get("elevenlabs_stability", 0.5)),
                                "similarity_boost": float(v.get("elevenlabs_similarity", 0.75)),
@@ -158,7 +163,7 @@ def groq_say(text: str, out: Path, v: dict, voice_pref: str = "male", log=None, 
         raise TTSUnavailable("GROQ_API_KEY is not set in .env")
     base = (base_url or load_settings()["agent"]["groq"]["base_url"]).rstrip("/")
     model = v.get("groq_tts_model") or "canopylabs/orpheus-v1-english"
-    voice = v.get("groq_voice_female" if voice_pref == "female" else "groq_voice_male") or "troy"
+    voice = voice_for(v, "groq", voice_pref) or "troy"
     parts = []
     with httpx.Client(timeout=120, transport=transport) as http:
         for k, piece in enumerate(_chunks(text, int(v.get("groq_tts_chunk_chars", 190)))):
@@ -252,7 +257,7 @@ def _synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=N
             if name == "groq":
                 return groq_say(text, out, v, voice_pref, log)
             if name == "kokoro":
-                voice = v.get("kokoro_voice_female" if voice_pref == "female" else "kokoro_voice_male", "am_michael")
+                voice = voice_for(v, "kokoro", voice_pref) or "am_michael"
                 return kokoro_say(text, out, voice)
             return piper_say(text, out, v.get("piper_model", ""))
         except Exception as e:
@@ -262,6 +267,55 @@ def _synth(text: str, out: Path, settings: dict, voice_pref: str = "male", log=N
     if log:
         log("no voiceover: " + "; ".join(errors) + " (pip install kokoro soundfile — see README → Local mode)", "warn")
     return None
+
+
+def pitch(wav: Path, factor: float) -> Path:
+    """Raise (or lower) a voice's pitch by `factor` without changing its speed (sets a mascot voice apart)."""
+    if abs(factor - 1.0) < 0.01:
+        return wav
+    from .media import run_ffmpeg
+    with wave.open(str(wav)) as w:
+        rate = w.getframerate()
+    tmp = wav.with_suffix(".pitch.wav")
+    run_ffmpeg(["-i", str(wav), "-af", f"asetrate={rate * factor:.0f},aresample={rate},atempo={1 / factor:.4f}",
+                "-c:a", "pcm_s16le", str(tmp)])
+    tmp.replace(wav)
+    return wav
+
+
+def assemble(parts: list[Path | None], starts: list[float], tempo: float, out: Path, duration: float, rate: int = 24000) -> Path:
+    """One mono voice track `duration` long with each line's audio placed at its start (sped up by `tempo`)."""
+    from .media import run_ffmpeg
+    buf = bytearray(int(duration * rate) * 2)
+    for k, (part, start) in enumerate(zip(parts, starts)):
+        if part is None:
+            continue
+        norm = out.with_suffix(f".n{k:02d}.wav")
+        af = [f"atempo={tempo:.4f}"] if tempo > 1.001 else []
+        run_ffmpeg(["-i", str(part), *(["-af", ",".join(af)] if af else []), "-ac", "1", "-ar", str(rate), "-c:a", "pcm_s16le", str(norm)])
+        with wave.open(str(norm)) as w:
+            data = w.readframes(w.getnframes())
+        norm.unlink(missing_ok=True)
+        at = int(start * rate) * 2
+        if at < len(buf):
+            chunk = data[: len(buf) - at]
+            buf[at:at + len(chunk)] = chunk
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(buf))
+    return out
+
+
+async def mux_exact(video: Path, speech: Path | None, out: Path, duration: float) -> dict:
+    """Mux an already-timed voice track under `video` as is (no lead, no speed-up): dialogue clips."""
+    if speech is None:
+        return await fit_to_clip(video, None, out, duration)
+    await arun_ffmpeg(["-i", str(video), "-i", str(speech), "-filter_complex",
+                       "[1:a]aresample=48000,aformat=channel_layouts=stereo,apad[a]", "-map", "0:v", "-map", "[a]",
+                       "-t", f"{duration:.3f}", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(out)])
+    return {"speech_seconds": round(probe(speech)["duration"], 2), "tempo": 1.0}
 
 
 async def fit_to_clip(video: Path, speech: Path | None, out: Path, duration: float, max_speedup: float = 1.3,

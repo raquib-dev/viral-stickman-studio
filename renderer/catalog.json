@@ -6,7 +6,8 @@
     "cinematic",
     "prehistoric",
     "cozy",
-    "historic"
+    "historic",
+    "night"
   ],
   "skill_styles": {
     "1": "minimal",
@@ -84,7 +85,8 @@
     "shrug",
     "cheer",
     "hold",
-    "explain"
+    "explain",
+    "rest"
   ],
   "hats": [
     "none",
@@ -167,5 +169,95 @@
     "bob",
     "pulse",
     "flap"
-  ]
+  ],
+  "kinds": [
+    "stickman",
+    "chibi",
+    "mascot"
+  ],
+  "mascot_shapes": [
+    "flower",
+    "star",
+    "blob",
+    "bean"
+  ],
+  "hair_styles": [
+    "long",
+    "bob",
+    "short",
+    "ponytail",
+    "bun",
+    "none"
+  ],
+  "glasses": [
+    "round",
+    "square",
+    "none"
+  ],
+  "sets": {
+    "office": {
+      "_comment": "Late-night desk for dialogue shorts. Metres; +Z toward the camera. Shared by the renderer (env.js) and the Python scene builder (dialogue.py).",
+      "desk_height": 0.7,
+      "desk_center": [
+        0.1,
+        0.12
+      ],
+      "desk_size": [
+        2.0,
+        0.8
+      ],
+      "person": [
+        -0.05,
+        0,
+        -0.52
+      ],
+      "mascot": [
+        0.3,
+        0.7,
+        0.1
+      ],
+      "monitor": [
+        0.78,
+        -0.08,
+        -0.75
+      ],
+      "keyboard": [
+        -0.06,
+        -0.06
+      ],
+      "notes": [
+        [
+          0.42,
+          0.33,
+          0.2
+        ],
+        [
+          0.56,
+          0.38,
+          -0.15
+        ],
+        [
+          0.5,
+          0.25,
+          0.4
+        ]
+      ],
+      "pen": [
+        0.15,
+        0.38
+      ],
+      "wall_z": -2.6,
+      "window": [
+        -2.4,
+        1.6,
+        0.85,
+        2.9
+      ],
+      "warm_light": [
+        -0.7,
+        1.25,
+        0.7
+      ]
+    }
+  }
 }

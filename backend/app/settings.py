@@ -83,6 +83,10 @@ DEFAULTS: dict[str, Any] = {
     # a script line needing a figure only you know ({{your number}}): "ask" = stop and show a Fill in box,
     # "rewrite" = have the writing model rephrase the line without a figure (a number is never invented)
     "script_gaps": "ask",
+    # dialogue shorts (project format "dialogue"): bed = "room" (generated room tone), "none", or a path to your own
+    # audio file; bed_db = its level under the voices; mascot_pitch raises the mascot's voice (1.0 = as the engine
+    # speaks it); dof = depth-of-field strength of the close-ups
+    "dialogue": {"bed": "room", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.035},
     "agent": {
         # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
         # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
@@ -119,6 +123,8 @@ DEFAULTS: dict[str, Any] = {
                     "style": "auto", "mood": "auto", "animation_pack": "auto"},
     },
     "voice": {"tts": "auto", "kokoro_voice_male": "am_michael", "kokoro_voice_female": "af_heart",
+              # the mascot in dialogue shorts; empty = the male voice
+              "kokoro_voice_mascot": "am_puck", "elevenlabs_voice_mascot": "", "groq_voice_mascot": "",
               "piper_model": "", "max_speedup": 1.3,
               # ElevenLabs (cloud): voice IDs from your account (defaults: premade "Adam" and "Rachel")
               "elevenlabs_voice_male": "pNInz6obpgDQGcFmaJgB", "elevenlabs_voice_female": "21m00Tcm4TlvDq8ikWAM",
@@ -163,6 +169,11 @@ def validate_settings(s: dict[str, Any]) -> None:
         raise ValueError("Groq URL must start with https://")
     if s["voice"]["tts"] not in TTS_ENGINES:
         raise ValueError("unknown TTS engine")
+    d = s.get("dialogue") or {}
+    if not -60 <= float(d.get("bed_db", -30)) <= -6:
+        raise ValueError("dialogue bed level must be between -60 and -6 dB")
+    if not 0.7 <= float(d.get("mascot_pitch", 1.0)) <= 1.5:
+        raise ValueError("mascot pitch must be between 0.7 and 1.5")
     if s.get("script_gaps", "ask") not in ("ask", "rewrite"):
         raise ValueError("script gaps must be ask or rewrite")
     if s["captions"].get("engine", "local") not in ("local", "groq"):

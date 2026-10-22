@@ -236,6 +236,12 @@ def validate_scene(s: dict, extra_ids: set | None = None) -> list[str]:
         errs += [f"unknown gesture {g.get('gesture')!r}" for g in a.get("gestures", []) if g.get("gesture") not in C["gestures"]]
         if a.get("hat", "none") not in C["hats"]:
             errs.append(f"unknown hat {a.get('hat')!r}")
+        if a.get("kind", "stickman") not in C["kinds"]:
+            errs.append(f"unknown character kind {a.get('kind')!r}")
+        ap = a.get("appearance") or {}
+        for key, allowed in (("hair_style", "hair_styles"), ("glasses", "glasses"), ("shape", "mascot_shapes")):
+            if key in ap and ap[key] not in C[allowed]:
+                errs.append(f"unknown {key.replace('_', ' ')} {ap[key]!r}")
         for g in a.get("gestures", []) + a.get("look", []):
             tgt = g.get("target", g.get("at"))
             if isinstance(tgt, str) and tgt not in ids and tgt not in ("left", "right", "up", "down", "none"):
@@ -291,6 +297,8 @@ class ThreeJSBackend:
             raise RenderError(f"the three.js renderer is not ready: {st.get('fix', '').strip(' ·')}", retryable=False)
 
     async def render_clip(self, clip: ClipSpec, prev: ClipResult | None, log: Log) -> ClipResult:
+        if clip.lines:
+            return await self._render_dialogue(clip, log)
         out = clip.out_path
         assert out is not None
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -360,6 +368,67 @@ class ThreeJSBackend:
                           meta={"scene": scene_path.name, "voice": bool(speech),
                                 "planned_by": scene.get("_planned_by", "your file") if override.exists() else "keywords",
                                 "qa": qa, **fit})
+
+    async def _render_dialogue(self, clip: ClipSpec, log: Log) -> ClipResult:
+        """Dialogue shorts: each line in its speaker's voice, laid out in the clip, one track; per-speaker lip sync;
+        a hard cut per line (dialogue.build_scene); each line's real timing saved for the captions."""
+        from .. import dialogue as dlg
+        out = clip.out_path
+        assert out is not None and clip.cast and clip.plan is not None
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fps = int(self.cfg.get("fps", 24))
+        dcfg = self.settings.get("dialogue", {})
+        wpm = float(self.settings.get("speaking_wpm", 150))
+        parts, durs = [], []
+        for k, ln in enumerate(clip.lines):
+            voice = clip.cast[ln["speaker"]]["voice"]
+            f = out.with_suffix(f".line{k:02d}.wav")
+            got = await asyncio.to_thread(tts.synth, ln["text"], f, self.settings, voice, log)
+            if got and voice == "mascot":
+                await asyncio.to_thread(tts.pitch, got, float(dcfg.get("mascot_pitch", 1.0)))
+            parts.append(got)
+            durs.append(probe(got)["duration"] if got else dlg.line_seconds(ln["text"], wpm))
+        pauses = [bool(dlg.PAUSE_RE.match(ln["text"])) for ln in clip.lines]
+        timing = dlg.layout(durs, pauses, clip.duration, float(self.settings["voice"].get("max_speedup", 1.3)))
+        if timing["tempo"] > 1.001:
+            log(f"clip {clip.index + 1}: lines sped up x{timing['tempo']} to fit 10 s", "warn")
+        if timing["overflow"] > 0.05:
+            log(f"clip {clip.index + 1}: the lines run {timing['overflow']:.1f}s past the clip even sped up; the last one is cut "
+                "(re-run Script for shorter lines)", "warn")
+        mix = out.with_suffix(".vo.wav")
+        voiced = any(parts)
+        if voiced:
+            await asyncio.to_thread(tts.assemble, parts, timing["starts"], timing["tempo"], mix, clip.duration)
+            envelope = mouth_envelope(mix, fps, 0.0, 1.0, clip.duration)
+        else:
+            envelope = [0.0] * int(round(clip.duration * fps))
+        w, h = dims(clip.ratio, clip.resolution)
+        scene = dlg.build_scene(clip.plan, timing, clip.cast, dlg.speaker_mouths(envelope, clip.plan, timing, fps), fps, w, h,
+                                clip.duration, seed=7 + clip.index * 31, quality=self.cfg.get("quality", "high"),
+                                theme=clip.theme if clip.theme == "light" else "dark", dof=float(dcfg.get("dof", 0.035)))
+        if self.cfg.get("animation_pack", "auto") == "off":
+            scene["pack"] = False
+        errs = validate_scene(scene)
+        if errs:
+            raise RenderError(f"dialogue scene is invalid: {'; '.join(errs[:4])}", retryable=False)
+        scene_path = out.with_suffix(".scene.json")
+        scene_path.write_text(json.dumps(scene, indent=1), encoding="utf-8")
+        names = {k: clip.cast[k]["name"] for k in dlg.SPEAKERS}
+        log(f"local-threejs clip {clip.index + 1}: dialogue, {len(clip.lines)} lines · "
+            + ", ".join(("wide" if p["shot"] == "wide" else f"{names[p['shot']]} close-up") for p in clip.plan)
+            + (" · lip sync from the voices" if voiced else " · no voice engine: silent"))
+        silent = out.with_suffix(".silent.mp4")
+        qa = await self._render(scene_path, silent, clip, log)
+        fit = await tts.mux_exact(silent, mix if voiced else None, out, clip.duration)
+        for f in [silent, mix, *[x for x in parts if x]]:
+            f.unlink(missing_ok=True)
+        lf = await asyncio.to_thread(last_frame, out, out.with_suffix(".last.png"))
+        timed = [{"i": ln["i"], "speaker": ln["speaker"], "text": ln["text"], "start": t0, "end": t1}
+                 for ln, t0, t1 in zip(clip.lines, timing["starts"], timing["ends"])]
+        return ClipResult(clip.index, out, clip.duration, 0.0, self.name, last_frame=lf,
+                          meta={"scene": scene_path.name, "voice": voiced, "planned_by": "dialogue", "qa": qa, "lines": timed,
+                                "speech_window": [timed[0]["start"], timed[-1]["end"]] if timed else None,
+                                "tempo": timing["tempo"], **fit})
 
     async def _render(self, scene_path: Path, out: Path, clip: ClipSpec, log: Log) -> dict:
         env = {**__import__("os").environ, "FFMPEG_PATH": ffmpeg_bin()}

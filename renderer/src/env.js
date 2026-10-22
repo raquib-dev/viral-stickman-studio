@@ -2,6 +2,7 @@
 // it comes from the palette, so a mood change re-colours the whole set live (apply(palette, t) runs every
 // frame). Lights are shared by all sets.
 import * as THREE from "three";
+import catalog from "../catalog.json";
 import { hash, noise1 } from "./util.js";
 
 const std = (opts = {}) => new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.8, metalness: 0, ...opts });
@@ -256,7 +257,124 @@ function prehistoric(group, seed) {
   };
 }
 
-const SETS = { minimal, modern, cinematic, cozy, historic, prehistoric };
+/** Canvas texture helper (sRGB). */
+function canvasTex(w, h, draw) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/** Late-night desk for two-character dialogue shorts: a desk (its front panel hides legs), a monitor with a
+ *  glowing code UI, keyboard, sticky notes, and a window onto a city at night whose lights become bokeh with
+ *  depth of field. Layout numbers are shared with the Python scene builder through catalog.json (sets.office). */
+function office(group, seed) {
+  const L = catalog.sets.office;
+  const H = L.desk_height, [dx, dz] = L.desk_center, [dw, dd] = L.desk_size;
+  const floor = std({ roughness: 0.95 });
+  add(group, new THREE.PlaneGeometry(30, 20), floor, [0, 0, 2], [-Math.PI / 2, 0, 0], 1, false);
+  // back wall with a wide window (wall pieces around the opening)
+  const wallMat = std({ roughness: 0.95 });
+  const wz = L.wall_z, [wx0, wx1, wy0, wy1] = L.window;
+  add(group, new THREE.BoxGeometry(16, wy0, 0.2), wallMat, [0, wy0 / 2, wz], [0, 0, 0], 1, false);
+  add(group, new THREE.BoxGeometry(16, 6 - wy1, 0.2), wallMat, [0, wy1 + (6 - wy1) / 2, wz], [0, 0, 0], 1, false);
+  add(group, new THREE.BoxGeometry(8 + wx0, wy1 - wy0, 0.2), wallMat, [(-8 + wx0) / 2, (wy0 + wy1) / 2, wz], [0, 0, 0], 1, false);
+  add(group, new THREE.BoxGeometry(8 - wx1, wy1 - wy0, 0.2), wallMat, [(8 + wx1) / 2, (wy0 + wy1) / 2, wz], [0, 0, 0], 1, false);
+  const frameMat = std({ roughness: 0.5 });
+  const mull = [[(wx0 + wx1) / 2, wy0, wx1 - wx0, 0.06], [(wx0 + wx1) / 2, wy1, wx1 - wx0, 0.06], [(wx0 + wx1) / 2, (wy0 + wy1) / 2, wx1 - wx0, 0.04]];
+  for (let x = wx0; x <= wx1 + 1e-6; x += (wx1 - wx0) / 3) mull.push([x, (wy0 + wy1) / 2, 0.05, wy1 - wy0]);
+  for (const [x, y, w, h] of mull) add(group, new THREE.BoxGeometry(w, h, 0.08), frameMat, [x, y, wz + 0.06], [0, 0, 0], 1, false);
+  // the night outside: a sky gradient, building silhouettes with lit windows, and soft city lights
+  const sky = new THREE.MeshBasicMaterial({ fog: false, map: canvasTex(4, 256, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, "#04060d"); gr.addColorStop(0.65, "#0b1430"); gr.addColorStop(1, "#13204a");
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  }) });
+  add(group, new THREE.PlaneGeometry(40, 16), sky, [0, 5, -16], [0, 0, 0], 1, false);
+  const bldg = new THREE.MeshBasicMaterial({ color: "#05070c", fog: false });
+  const lit = [new THREE.MeshBasicMaterial({ color: "#ffd59a", fog: false, toneMapped: false }),
+    new THREE.MeshBasicMaterial({ color: "#9cc8ff", fog: false, toneMapped: false })];
+  for (let k = 0; k < 14; k++) {
+    const bx = -9 + k * 1.35 + (hash(k, seed) - 0.5) * 0.6, bh = 2.5 + hash(k + 20, seed) * 6, bw = 0.9 + hash(k + 40, seed) * 0.7, bz = -11 - hash(k + 60, seed) * 3;
+    add(group, new THREE.BoxGeometry(bw, bh, 0.3), bldg, [bx, bh / 2 - 0.5, bz], [0, 0, 0], 1, false);
+    for (let r = 0; r < Math.floor(bh / 0.45); r++) for (let c = 0; c < 3; c++) {
+      if (hash(k * 97 + r * 7 + c, seed) > 0.32) continue;
+      add(group, new THREE.PlaneGeometry(0.12, 0.16), lit[(k + r + c) % 2], [bx - bw / 2 + 0.22 + c * (bw - 0.44) / 2, r * 0.45, bz + 0.16], [0, 0, 0], 1, false);
+    }
+  }
+  const dotColors = ["#ffcf8a", "#7fb6ff", "#ff6b6b", "#ffe8b0", "#8ff0ff"];
+  const dotTex = glowTexture();
+  for (let k = 0; k < 26; k++) {
+    const m = new THREE.MeshBasicMaterial({ map: dotTex, color: dotColors[k % dotColors.length], transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, fog: false, toneMapped: false, opacity: 0.85 });
+    const sz = 0.12 + hash(k + 300, seed) * 0.18;
+    add(group, new THREE.PlaneGeometry(sz, sz), m, [-6 + hash(k + 100, seed) * 12, 0.3 + hash(k + 200, seed) * 4.2, -7 - hash(k + 400, seed) * 3], [0, 0, 0], 1, false);
+  }
+  // desk: top, a front panel down to the floor (no legs on show), the far edge toward the person
+  const wood = std({ roughness: 0.55 });
+  add(group, new THREE.BoxGeometry(dw, 0.045, dd), wood, [dx, H - 0.0225, dz]);
+  add(group, new THREE.BoxGeometry(dw, H - 0.045, 0.03), wood, [dx, (H - 0.045) / 2, dz + dd / 2 - 0.02], [0, 0, 0], 1, false);
+  // monitor angled toward the person, with a code editor on the screen
+  const [mx, mz, mry] = L.monitor;
+  const mon = new THREE.Group();
+  mon.position.set(mx, H, mz); mon.rotation.y = mry;
+  group.add(mon);
+  const plastic = std({ roughness: 0.4 });
+  add(mon, new THREE.BoxGeometry(0.06, 0.24, 0.05), plastic, [0, 0.12, -0.03]);
+  add(mon, new THREE.BoxGeometry(0.22, 0.012, 0.16), plastic, [0, 0.006, -0.02]);
+  add(mon, new THREE.BoxGeometry(0.66, 0.42, 0.03), plastic, [0, 0.44, 0]);
+  const screen = new THREE.MeshBasicMaterial({ toneMapped: false, map: canvasTex(512, 320, (g, w, h) => {
+    g.fillStyle = "#0b1a3a"; g.fillRect(0, 0, w, h);
+    g.fillStyle = "#11254f"; g.fillRect(0, 0, w * 0.22, h);
+    const cols = ["#7fb2ff", "#e6edff", "#ffd27f", "#8ff0c8", "#c0a8ff"];
+    for (let r = 0; r < 14; r++) {
+      let x = w * 0.26 + (hash(r, seed + 5) > 0.6 ? 24 : 0);
+      for (let k = 0; k < 4; k++) {
+        const len = 20 + hash(r * 9 + k, seed) * 90;
+        if (x + len > w - 16) break;
+        g.fillStyle = cols[(r + k) % cols.length]; g.globalAlpha = 0.85;
+        g.fillRect(x, 18 + r * 21, len, 9); x += len + 10;
+      }
+    }
+    g.globalAlpha = 1;
+  }) });
+  add(mon, new THREE.PlaneGeometry(0.62, 0.38), screen, [0, 0.44, 0.016], [0, 0, 0], 1, false);
+  const monLight = new THREE.SpotLight("#7fa8ff", 3.2, 3, Math.PI / 3.2, 0.8, 1.6);
+  monLight.position.set(0, 0.44, 0.15);
+  mon.add(monLight, monLight.target);
+  monLight.target.position.set(0, 0.35, 1.2);
+  // keyboard, sticky notes, a pen
+  const keys = std({ roughness: 0.5, map: canvasTex(256, 96, (g, w, h) => {
+    g.fillStyle = "#1c1f26"; g.fillRect(0, 0, w, h);
+    g.fillStyle = "#2c3140";
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 14; c++) g.fillRect(6 + c * 17.6, 8 + r * 21, 14, 16);
+  }) });
+  const [kx, kz] = L.keyboard;
+  add(group, new THREE.BoxGeometry(0.46, 0.018, 0.15), keys, [kx, H + 0.009, kz], [0, -0.05, 0]);
+  const noteCols = ["#ffd84a", "#ff9b54", "#ffe9a8"];
+  L.notes.forEach(([nx, nz, rot], i) => add(group, new THREE.BoxGeometry(0.075, 0.004, 0.075), std({ color: noteCols[i % 3], roughness: 0.9 }),
+    [nx, H + 0.002, nz], [0, rot, 0], 1, false));
+  add(group, new THREE.CylinderGeometry(0.006, 0.006, 0.16, 6), std({ color: "#c8ccd4", roughness: 0.4 }), [L.pen[0], H + 0.006, L.pen[1]], [0, 0, Math.PI / 2 + 0.3]);
+  // the warm light on the person's face (a desk lamp out of frame, front left)
+  const warm = new THREE.PointLight("#ffb070", 2.4, 3.2, 1.5);
+  warm.position.set(...L.warm_light);
+  group.add(warm);
+  const wallGlowM = wallGlow(group, [-0.6, 1.6, wz + 0.12], 4);
+  return {
+    apply(p) {
+      floor.color.copy(p.floor); wallMat.color.copy(p.wall); frameMat.color.copy(p.wall).multiplyScalar(0.55);
+      wood.color.set("#5a3d29").lerp(p.floor, 0.15); plastic.color.set("#1a1c22");
+      warm.color.copy(p.key); monLight.color.copy(p.rim).lerp(new THREE.Color("#7fa8ff"), 0.5);
+      wallGlowM.color.copy(p.rim).multiplyScalar(0.6);
+    },
+    lights: { key: 0.3, rim: 0.55, hemi: 0.45, front: 0.6 }, fog: [7, 40],
+  };
+}
+
+const SETS = { minimal, modern, cinematic, cozy, historic, prehistoric, office };
 
 export function buildSet(scene, kind, seed = 1) {
   const group = new THREE.Group();

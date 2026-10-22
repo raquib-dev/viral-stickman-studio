@@ -225,3 +225,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         box.y = 1 - (cap_bottom_margin / frame_h) - box.h
         boxes.append(box)
     return header + "\n".join(events) + "\n", safe_zone_violations(boxes, ratio)
+
+
+def build_line_ass(lines: list[dict], ratio: str, frame_w: int, frame_h: int, captions: bool = True) -> tuple[str, list[str]]:
+    """Dialogue captions: each line whole, centred near the top (clear of faces), small white text on a
+    translucent dark box, a quick fade. `lines` carry start/end in seconds. Returns (ass_text, safe-zone problems)."""
+    m = safe_margins(ratio)
+    size = int(frame_h * (0.03 if ratio == "9:16" else 0.045))
+    top = int(frame_h * (m["top"] + 0.01))
+    ml, mr = int(frame_w * max(m["left"], 0.12)), int(frame_w * max(m["right"], 0.12))
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {frame_w}
+PlayResY: {frame_h}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Line,Arial,{size},&H00FFFFFF,&H00FFFFFF,&H8C000000,&H00000000,1,0,0,0,100,100,0,0,3,{max(3, size // 5)},0,8,{ml},{mr},{top},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    events, boxes = [], []
+    if captions:
+        for ln in lines:
+            if ln["end"] <= ln["start"]:
+                continue
+            events.append(f"Dialogue: 0,{_ass_time(ln['start'])},{_ass_time(ln['end'])},Line,,0,0,0,,{{\\fad(110,110)}}{_esc(ln['text'])}")
+        if lines:
+            longest = max((ln["text"] for ln in lines), key=len)
+            boxes.append(text_box("line captions", longest, ratio, top / frame_h, size, frame_w, frame_h))
+    return header + "\n".join(events) + "\n", safe_zone_violations(boxes, ratio)

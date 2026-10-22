@@ -265,6 +265,53 @@ walking in, a second character, props and where they go, badges, note/code panel
 fades); a JSON tab; **Check** (shows what would be repaired), **Preview frame** at any moment (a real render,
 seconds on your GPU), **Save** and **Save & re-render clip**. Saved edits are yours: the AI planner keeps them.
 
+### Dialogue shorts (two characters, 3D, a cut per line)
+
+A second video format next to the narrated stickman: a person and a mascot trade short, deadpan lines at a
+late-night desk, cut on every line, with line captions at the top and a quiet room-tone bed (the style of
+"she said no sixty-one times" shorts). Everything runs on this machine with **local-threejs**.
+
+**After pulling this branch:** `cd renderer; npm run build; cd ..; cd frontend; npm run build; cd ..`, restart.
+
+**Make one:** New project → **Video format: Dialogue short** → give the two characters names → create. Then
+Settings → Render → Backend **local-threejs**, and run the pipeline as usual (topics → hooks → script → … →
+stitch). Differences from the narrated format:
+
+- **Hooks:** the SAY line is the first line one character says to the other.
+- **Script:** speaker-tagged lines written to the format's rules, then checked (see below) and revised up to
+  3 times; lines are grouped into the 10 s clips without ever splitting one. Studio shows them per clip with
+  the turn, the callback and the button marked.
+- **Direction A/B:** not needed (no Omni prompts); they finish instantly.
+- **3D plan:** one shot per line, free and instant: the speaker's close-up (with the other character out of
+  focus behind), a wide two-shot when the same person speaks twice, on a pause beat, after 6 close-ups and for
+  the ending; faces and gestures from the words (a hand to the cheek on questions and pauses, the mascot hops
+  on "!").
+- **Render:** each line in its speaker's voice, laid out in the clip from the real voice lengths (sped up a
+  little only if needed), lip sync per speaker, hard cuts.
+- **Stitch:** whole-line captions at the top timed from the render (no transcription needed), the sound bed
+  dipping under the voices, loudness, `final/qa.json`.
+
+**The writing rules** (`backend/app/dialogue.py`, also given to the writing model): lines of 2-7 words (max
+9); nobody speaks more than 3 lines in a row and each character has at least 30%; 2-4 pause beats ("...");
+at least 2 oddly specific in-story numbers ("sixty-one times", "1 AM"), never facts about the world (no
+percentages, studies, surveys; they are flagged); a callback that repeats an earlier phrase 3+ lines later; a
+turn in the second half; an ending that loops back to the opening; line 1 is the approved hook; a lowercase
+title that quotes the script and ends with a question to the viewer.
+
+**Cast** (Render page → Cast): names and roles (the roles steer the writing), voices, and looks. The person:
+hair style and colour, skin, jacket and shirt colours, glasses, headphones, and a **face variant** number (any
+number other than 0 nudges eye spacing, jaw and head shape slightly: the same person, a little different, per
+series or per video). The mascot: shape (flower, star, blob, bean) and colour. **Preview cast** renders them
+at the desk. Changing a look or voice re-renders only the clips it affects.
+
+**Voices:** the person uses the "female" or "male" voice, the mascot the "mascot" voice: Kokoro `am_puck` by
+default (Settings → Voice), ElevenLabs/Groq use their mascot voice when set, else the male one. Settings →
+Dialogue shorts → **Mascot pitch** lifts it (1.10-1.20 makes a clearly separate character), **Sound bed**
+(`room`, `none`, or the path of your own audio file, looped), **Bed level**, **Close-up background blur**.
+
+Note: the default mascot is orange, a flower shape, and named Claude, like the reference video. For a channel,
+use your own mascot design and name: a well-known product's logo, colours or name belong to its owner.
+
 ### Animation pack (included: more human movement)
 
 The base rig's moves come from a robot character. The repo now ships a CC0 humanoid animation pack,

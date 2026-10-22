@@ -21,6 +21,9 @@ class ClipSpec:
     voice_pref: str = "male"
     style: str = "1"              # the directing skill's style id (1, 2A, 2B, 3, 4, 5)
     count: int = 1                # clips in the video (first/last clip get transitions)
+    lines: list | None = None     # dialogue shorts: this clip's lines [{i, speaker, text}]
+    cast: dict | None = None      # dialogue shorts: the two characters (names, kinds, voices, looks)
+    plan: list | None = None      # dialogue shorts: the shot plan for these lines
 
 
 @dataclass

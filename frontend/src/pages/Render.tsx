@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { GatePanel } from "../components/GatePanel";
 import { RunStageButton } from "../components/Pipeline";
+import { CastPanel } from "../components/CastPanel";
 import { ScriptGaps } from "../components/ScriptGaps";
 import { Empty, ErrorBox, Note, Section, StatusChip, fmtDur, fmtUsd } from "../components/ui";
 import { api, fileUrl, getFile } from "../lib/api";
@@ -40,6 +41,7 @@ export default function Render() {
           <RunStageButton stage="stitch" /></span>
       </div>
       <ScriptGaps />
+      {snap?.project.data.format === "dialogue" && <CastPanel />}
       <Section title="Cost">
         <div className="grid gap-3 md:grid-cols-4" data-testid="cost-meter">
           <Stat label="Backend" value={settings?.dry_run ? "mock (dry run)" : r?.backend} />
@@ -194,7 +196,7 @@ function ScenePlans({ n }: { n: number }) {
                   <ul className="mt-1 list-disc pl-4 text-ink-2">{p.fixes.map((f: string, i: number) => <li key={i}>{f}</li>)}</ul></details>
               )}
               <div className="mt-2 flex gap-2">
-                <Link className="btn !py-0.5 text-xs" to={`/p/${slug}/scene?clip=${k + 1}`} data-testid={`edit-scene-${k + 1}`}>✎ Edit</Link>
+                {p?.planned_by !== "dialogue" && <Link className="btn !py-0.5 text-xs" to={`/p/${slug}/scene?clip=${k + 1}`} data-testid={`edit-scene-${k + 1}`}>✎ Edit</Link>}
                 <button className="btn !py-0.5 text-xs" disabled={busy} onClick={() => replan(k + 1, p?.planned_by === "editor")} data-testid={`replan-${k + 1}`}>↻ Re-plan</button>
                 {p && <a className="btn !py-0.5 text-xs" href={fileUrl(slug!, p.file)} target="_blank" rel="noreferrer">View plan</a>}
               </div>

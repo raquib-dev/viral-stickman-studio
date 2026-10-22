@@ -68,6 +68,8 @@ class ProjectIn(BaseModel):
     competitors: dict[str, list[str]] = Field(default_factory=lambda: {"youtube": [], "instagram": []})
     voice_pref: str = "male"
     voice_transcripts: dict[str, list[str]] = Field(default_factory=lambda: {"youtube": [], "instagram": []})
+    format: str = "narrated"      # "narrated" (stickman explainer) | "dialogue" (two-character dialogue short)
+    cast: dict | None = None      # dialogue: {"a": {...}, "b": {...}} over the defaults
 
 
 class GateDecision(BaseModel):
@@ -224,6 +226,36 @@ def list_projects() -> list[dict]:
     return out
 
 
+@app.get("/api/dialogue/cast-defaults")
+def cast_defaults() -> dict:
+    from . import dialogue as dlg
+    return {"cast": dlg.DEFAULT_CAST, "kinds": dlg.KINDS, "voices": dlg.VOICES, "hair_styles": dlg.CATALOG["hair_styles"],
+            "glasses": dlg.CATALOG["glasses"], "mascot_shapes": dlg.CATALOG["mascot_shapes"]}
+
+
+@app.post("/api/projects/{slug}/cast/preview")
+async def cast_preview(slug: str) -> dict:
+    """A still of the project's two characters at the desk (a real render, a few seconds on the GPU)."""
+    from . import dialogue as dlg
+    from .render import threejs as tj
+    p = _project_or_404(slug)
+    cast = dlg.cast_for(p["data"])
+    plan = [{"i": 0, "speaker": "a", "shot": "wide", "wide_variant": 0, "face": "neutral", "gesture": None}]
+    scene = dlg.build_scene(plan, {"starts": [0.5], "ends": [2.0]}, cast, {}, 24, 540, 960, 3.0, seed=7, quality="high")
+    errs = tj.validate_scene(scene)
+    if errs:
+        raise HTTPException(400, "; ".join(errs))
+    out = paths.ensure_project_dirs(slug) / "scenes" / "cast-preview.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        png = await tj.render_still(scene, out, t=1.2)
+    except Exception as e:
+        raise HTTPException(502, f"preview failed: {str(e)[:300]}")
+    if not png:
+        raise HTTPException(409, "the three.js renderer is not ready (Settings → Local services)")
+    return {"image": "scenes/cast-preview.png", "updated_at": time.time()}
+
+
 @app.post("/api/projects")
 def create_project(body: ProjectIn) -> dict:
     slug = paths.slugify(body.name)
@@ -232,6 +264,8 @@ def create_project(body: ProjectIn) -> dict:
         slug = paths.slugify(f"{base[:36]}-{k}")
         k += 1
     data = body.model_dump()
+    if data.get("format") not in ("narrated", "dialogue"):
+        raise HTTPException(400, "format must be narrated or dialogue")
     db.upsert_project(slug, body.name, data)
     _write_project_json(slug, data)
     return _snapshot(slug)

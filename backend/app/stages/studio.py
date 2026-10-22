@@ -6,6 +6,7 @@ import re
 import time
 
 from .. import db
+from .. import dialogue as dlg
 from ..agent import tasks
 from ..agent.skillref import COLOR_NOTATION, anchor_for, female_voice_block, male_voice_block
 from ..analysis import blueprint as bp
@@ -33,7 +34,8 @@ async def hooks(ctx) -> dict:
     ctx.log(f"topic: {topic['title']}")
     fmt = fmt_for_project(p)
     profile = ctx.read_json("research/niche-profile.json")
-    res = await ctx.agent.run(tasks.hooks(topic, p["niche"], fmt, profile["summary"]), ctx)
+    res = await ctx.agent.run(tasks.hooks(topic, p["niche"], fmt, profile["summary"],
+                                          dialogue=dlg.cast_for(p) if dlg.is_dialogue(p) else None), ctx)
     says = [h["say"] for h in res["hooks"]]
     yt = {r["hook"]: r for r in await th(tools.yt_hookscore, says)}
     ig = {r["hook"]: r for r in await th(tools.ig_hookscore, says)}
@@ -89,6 +91,10 @@ def fill_placeholders(script: dict, values: dict[str, str]) -> dict:
         return PLACEHOLDER.sub(lambda m: str(values[m.group(1)]).strip() if str(values.get(m.group(1), "")).strip() else m.group(0), text)
     for c in script["clips"]:
         c["vo"] = sub(c["vo"])
+        for ln in c.get("lines") or []:
+            ln["text"] = sub(ln["text"])
+    for ln in script.get("lines") or []:
+        ln["text"] = sub(ln["text"])
     for k in ("say", "write"):
         if isinstance(script.get("hook", {}).get(k), str):
             script["hook"][k] = sub(script["hook"][k])
@@ -121,6 +127,8 @@ async def rewrite_gaps(ctx, script: dict) -> dict:
     gaps = placeholders(script["clips"])
     if not gaps:
         return script
+    if script.get("mode") == "dialogue":
+        raise StageError("a dialogue script should not have {{gaps}}: type the value in the Fill in box, or re-run Script")
     todo = [{"clip": c["index"] + 1, "vo": c["vo"]} for c in script["clips"] if PLACEHOLDER.search(c["vo"])]
     hook_say = (script.get("hook") or {}).get("say", "")
     feedback = ""
@@ -185,6 +193,57 @@ def _script_flags(clips: list[dict], beats_report: dict, hook_say: str, duration
     return flags
 
 
+async def _dialogue_script(ctx, p: dict, hook: dict, topic: dict, duration: int) -> dict:
+    """Dialogue shorts: speaker-tagged lines written to the genre's rules, checked, revised up to 3 times, then
+    grouped into the video's 10 s clips (a line is never split across clips)."""
+    cast = dlg.cast_for(p)
+    profile = ctx.read_json("research/niche-profile.json")
+    wpm = float(ctx.settings.get("speaking_wpm", 150))
+    n_clips = duration // 10
+    revise, res, flags = None, {}, []
+    for attempt in range(1, 4):
+        res = await ctx.agent.run(tasks.dialogue_script(topic, hook, duration, cast, p["niche"], profile["summary"], wpm, revise), ctx)
+        res = {**res, "lines": [{"speaker": ln["speaker"], "text": ln["text"].strip()} for ln in res["lines"]]}
+        flags = dlg.dialogue_flags(res, cast, hook["say"], duration, wpm)
+        ctx.log(f"dialogue attempt {attempt}: {len(res['lines'])} lines, {len(flags)} flag(s)")
+        if not flags:
+            break
+        for f in flags:
+            ctx.log("  flag: " + f, "warn")
+        revise = {"res": {k: res.get(k) for k in ("title", "lines", "turn", "button")}, "flags": flags}
+    else:
+        ctx.log("flags remain after 3 attempts: shown in Studio for you to fix by re-running Script", "warn")
+    lines = res["lines"]
+    # ig-human's character/slop pass, line by line (the hook line stays word for word)
+    hum = await th(tools.humanize, "\n".join(ln["text"] for ln in lines))
+    new = hum["text"].rstrip("\n").split("\n")
+    if len(new) == len(lines):
+        for k, (ln, text) in enumerate(zip(lines, new)):
+            if k and text.strip():
+                ln["text"] = text.strip()
+    groups = dlg.group_lines(lines, n_clips, wpm) or dlg.group_lines(lines, n_clips, wpm, stretch=1.2)
+    if groups is None:
+        raise StageError(f"the dialogue does not fit {n_clips} clips of 10 s ({len(lines)} lines); re-run Script "
+                         "(flags: " + "; ".join(flags[:3]) + ")")
+    clips = dlg.clips_from_lines(lines, groups)
+    flags = dlg.dialogue_flags({**res, "lines": lines}, cast, hook["say"], duration, wpm)
+    data = {"mode": "dialogue", "title": res["title"], "lines": lines, "clips": clips, "hook": hook, "topic": topic,
+            "duration": duration, "wpm": wpm, "flags": flags, "plan": [], "turn": res.get("turn"), "button": res.get("button"),
+            "callback": dlg.find_callback(lines), "claims_to_source": res.get("claims_to_source") or [],
+            "cast": {s: cast[s]["name"] for s in dlg.SPEAKERS}, "placeholders": placeholders(clips)}
+    if res.get("_fixture"):
+        data["_fixture"] = True
+    ctx.write_json("script/script.json", data)
+    md = [f"# {res['title']}", "", f"Hook (line 1): {hook['say']}", ""]
+    for c in clips:
+        md += [f"## Clip {c['index'] + 1} ({c['index'] * 10}-{c['index'] * 10 + 10}s)"]
+        md += [f"- **{cast[ln['speaker']]['name']}:** {ln['text']}" for ln in c["lines"]] + [""]
+    ctx.write_text("script/script.md", "\n".join(md))
+    ctx.log(f"dialogue: {len(lines)} lines in {n_clips} clips; turn at line {data['turn']}, "
+            f"callback {('lines %d and %d' % (data['callback'][0] + 1, data['callback'][1] + 1)) if data['callback'] else 'missing'}")
+    return {"outputs": ["script/script.json", "script/script.md"]}
+
+
 @stage("script", "Script", description="5-stage script placed by the niche profile; beats.py timing; ig-human pass.",
        skills=["yt-script", "ig-reel", "ig-human"], tools=["ig-reel/beats.py", "ig-human/humanize.py", "ig-human/detect.py"])
 async def script(ctx) -> dict:
@@ -198,6 +257,8 @@ async def script(ctx) -> dict:
     topic = hk["topic"]
     duration = int(p["duration"])
     fmt = fmt_for_project(p)
+    if dlg.is_dialogue(p):
+        return await _dialogue_script(ctx, p, hook, topic, duration)
     profile = ctx.read_json("research/niche-profile.json")
     plan = plan_beats(duration, fmt, profile)
     ctx.write_json("script/plan.json", plan)
@@ -278,6 +339,21 @@ def _annotations(plan: list[dict]) -> list[dict]:
 async def direction_a(ctx) -> dict:
     p = ctx.project_data()
     s = ctx.read_json("script/script.json")
+    if dlg.is_dialogue(p):
+        # dialogue shorts are staged per line by the app (3D plan step); there are no Omni prompts to direct
+        cast = dlg.cast_for(p)
+        rows = [{"clip": c["index"] + 1, "time": f"{c['index'] * 10}-{c['index'] * 10 + 10}s", "purpose": "dialogue",
+                 "scene": "late-night desk", "motion": "hard cut per line",
+                 "vo": " / ".join(f"{cast[ln['speaker']]['name']}: {ln['text']}" for ln in c.get("lines", [])), "bgm": "room tone"}
+                for c in s["clips"]]
+        md = ("# Dialogue short\n\nStaged automatically per line in the 3D plan step: the speaker's close-up, a wide "
+              "two-shot on pauses, repeats and the ending, hard cuts, two voices, line captions at the top.\n")
+        ctx.write_text("direction/phase-a.md", md)
+        ctx.write_json("direction/phase-a.json", {"mode": "dialogue", "markdown": md, "rows": rows, "palette": [],
+                                                  "voice_profile": f"{cast['a']['name']} ({cast['a']['voice']}) + {cast['b']['name']} ({cast['b']['voice']})"})
+        ctx.write_json("direction/phase-a.annotations.json", [])
+        ctx.log("dialogue short: no Omni direction needed; shots are planned per line in the 3D plan step")
+        return {"outputs": ["direction/phase-a.md", "direction/phase-a.json", "direction/phase-a.annotations.json"]}
     ann = _annotations(s["plan"])
     ctx.write_json("direction/phase-a.annotations.json", ann)
     g = db.get_gate(ctx.project, "phase_a")
@@ -359,6 +435,17 @@ def check_phase_b(res: dict, n: int, style: str, theme: str) -> list[str]:
        skills=["directing-stickman-videos"])
 async def direction_b(ctx) -> dict:
     p = ctx.project_data()
+    if dlg.is_dialogue(p):
+        s = ctx.read_json("script/script.json")
+        prompts = [{"clip": c["index"] + 1, "text": f"DIALOGUE CLIP {c['index'] + 1}\n" + "\n".join(
+            f"{ln['speaker']}: {ln['text']}" for ln in c.get("lines", []))} for c in s["clips"]]
+        ctx.write_json("direction/phase-b.json", {"mode": "dialogue", "checks": [], "prompts": prompts,
+                                                  "character_anchor": "the project's cast (Render page → Cast)",
+                                                  "voice_block": "one voice per character (Settings → Voice)",
+                                                  "stitching_guide": "hard cuts between clips; the dialogue carries on",
+                                                  "audio_note": "voices + a quiet room-tone bed under them"})
+        ctx.log("dialogue short: the clips render with local-threejs from the script's lines")
+        return {"outputs": ["direction/phase-b.json"]}
     payload = phase_a_gate_payload(ctx, p)
     ctx.require_gate("phase_a", payload, options=None, default_choice="approved", auto_reason="Phase A as written")
     g = db.get_gate(ctx.project, "phase_a")

@@ -66,10 +66,43 @@ function Hooks() {
   );
 }
 
+function DialogueScript({ s }: { s: any }) {
+  const names = s.cast ?? { a: "a", b: "b" };
+  const marks = (i: number) => [i + 1 === s.turn && "turn", i + 1 === s.button && "button",
+    s.callback && (i === s.callback[0] || i === s.callback[1]) && "callback"].filter(Boolean) as string[];
+  return (
+    <Section title="Dialogue script (two characters, a cut per line)" right={<RunStageButton stage="script" />} id="script">
+      <div className="grid gap-4" data-testid="dialogue-script">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <b>{s.title}</b>{s._fixture && <FixtureBadge />}
+          <span className="chip">{s.lines.length} lines · {s.clips.length} clips</span>
+        </div>
+        {s.flags.length === 0
+          ? <Note>✓ The format's rules hold: short lines, ping-pong, pause beats, in-story numbers, a callback, a turn in the second half, an ending that loops, a lowercase title ending in a question, and it fits {s.clips.length} clips of 10 s.</Note>
+          : <div className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--serious)" }} data-testid="script-flags">
+            <b>Flags</b> (re-run Script to fix):<ul className="mt-1 list-disc pl-5">{s.flags.map((f: string) => <li key={f}>{f}</li>)}</ul></div>}
+        <ScriptGaps />
+        {s.clips.map((c: any) => (
+          <div key={c.index} className="card-2">
+            <div className="text-xs text-ink-3">Clip {c.index + 1} · {c.index * 10}-{c.index * 10 + 10}s</div>
+            <div className="mt-1 grid gap-0.5">{c.lines.map((ln: any) => (
+              <div key={ln.i} className="flex flex-wrap items-baseline gap-2 text-sm">
+                <span className="w-20 shrink-0 font-semibold" style={{ color: ln.speaker === "a" ? "var(--accent)" : "var(--good)" }}>{names[ln.speaker]}</span>
+                <span className="text-ink">{ln.text}</span>
+                {marks(ln.i).map((m) => <span key={m} className="chip !py-0 text-[10px]">{m}</span>)}
+              </div>))}</div>
+          </div>))}
+        {s.claims_to_source?.length > 0 && <Note tone="warn"><b>Check before publishing:</b><ul className="list-disc pl-5">{s.claims_to_source.map((c: string) => <li key={c}>{c}</li>)}</ul></Note>}
+      </div>
+    </Section>
+  );
+}
+
 function Script() {
   const [s] = useProjectFile<any>("script/script.json");
   const [beats] = useProjectFile<any>("script/beats.json");
   const [human] = useProjectFile<any>("script/human.json");
+  if (s?.mode === "dialogue") return <DialogueScript s={s} />;
   return (
     <Section title="Script (5-stage arc, beats placed by the niche profile)" right={<RunStageButton stage="script" />} id="script">
       {!s ? <Empty>No script yet (needs an approved hook).</Empty> : (

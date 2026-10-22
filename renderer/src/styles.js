@@ -70,6 +70,16 @@ export const STYLES = {
         glow: "#ffe2a8", accent: "#8a2f24", ink: "#3a2b17", card: "#f5e9cf", cardInk: "#3a2b17" }),
     },
   },
+  night: {
+    label: "Late-night desk (dialogue)", skill: "", env: "office", card: "glass", font: "Inter",
+    char: { material: "clay", roughness: 0.6 }, post: { bloom: 0.55, vignette: 0.42, grain: 0.03 },
+    palette: {
+      dark: P({ bg: "#05070d", floor: "#121318", wall: "#0d1018", key: "#ffc48f", rim: "#6f97ff", fill: "#26314c",
+        glow: "#7fa8ff", accent: "#ffb347", ink: "#f2efe9", card: "#0f1219", cardInk: "#eef2f7" }),
+      light: P({ bg: "#cfd7e6", floor: "#b9b2a6", wall: "#d8dde6", key: "#fff4e4", rim: "#9cc4ff", fill: "#a9b6cc",
+        glow: "#ffe0b0", accent: "#e07a2f", ink: "#2b2f36", card: "#ffffff", cardInk: "#1f2430" }),
+    },
+  },
 };
 
 /** The directing skill's style ids -> style packs. */

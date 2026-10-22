@@ -122,7 +122,7 @@ export default function Settings() {
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm">Voiceover for local video<select className="input" value={s.voice.tts} onChange={(e) => set(["voice", "tts"], e.target.value)} data-testid="tts-engine">
             <option value="auto">auto (Kokoro, then Piper)</option><option value="kokoro">Kokoro-82M</option><option value="piper">Piper</option><option value="elevenlabs">ElevenLabs (cloud, paid per character)</option><option value="groq">Groq (cloud, GROQ_API_KEY)</option><option value="none">none (silent clips)</option></select></label>
-          <label className="text-sm">Kokoro voice (male / female)<span className="flex gap-1"><input className="input" value={s.voice.kokoro_voice_male} onChange={(e) => set(["voice", "kokoro_voice_male"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_female} onChange={(e) => set(["voice", "kokoro_voice_female"], e.target.value)} /></span></label>
+          <label className="text-sm">Kokoro voice (male / female / mascot)<span className="flex gap-1"><input className="input" value={s.voice.kokoro_voice_male} onChange={(e) => set(["voice", "kokoro_voice_male"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_female} onChange={(e) => set(["voice", "kokoro_voice_female"], e.target.value)} /><input className="input" value={s.voice.kokoro_voice_mascot} onChange={(e) => set(["voice", "kokoro_voice_mascot"], e.target.value)} title="the mascot in dialogue shorts" /></span></label>
           <label className="text-sm">Piper voice model (.onnx path)<input className="input" value={s.voice.piper_model} onChange={(e) => set(["voice", "piper_model"], e.target.value)} /></label>
           <label className="text-sm">Caption timing<select className="input" value={s.captions.engine ?? "local"} onChange={(e) => set(["captions", "engine"], e.target.value)} data-testid="caption-engine">
             <option value="local">faster-whisper on this machine</option><option value="groq">Groq Whisper (cloud, GROQ_API_KEY)</option></select></label>
@@ -143,6 +143,16 @@ export default function Settings() {
               <p className="text-xs text-ink-3">Needs <code>GROQ_API_KEY</code> in <code>.env</code>. Voice names depend on the model (see the Groq console's text-to-speech docs; some models need their terms accepted in the console once). Long lines are spoken in sentence-sized pieces. If a call fails that clip uses Kokoro/Piper instead.</p>
             </div>)}
           <label className="text-sm">Max voice speed-up to fit a clip<input className="input" type="number" min={1} max={1.6} step={0.05} value={s.voice.max_speedup} onChange={(e) => set(["voice", "max_speedup"], Number(e.target.value))} /></label>
+        </div>
+      </Section>
+      <Section title="Dialogue shorts">
+        <div className="grid gap-3 md:grid-cols-4" data-testid="dialogue-settings">
+          <label className="text-sm">Sound bed<input className="input" list="bed-opts" value={s.dialogue.bed} onChange={(e) => set(["dialogue", "bed"], e.target.value)} title="room = generated room tone with a faint pad; none; or a path to your own audio file (looped)" />
+            <datalist id="bed-opts"><option value="room" /><option value="none" /></datalist></label>
+          <label className="text-sm">Bed level (dB under the voices)<input className="input" type="number" min={-60} max={-6} step={1} value={s.dialogue.bed_db} onChange={(e) => set(["dialogue", "bed_db"], Number(e.target.value))} /></label>
+          <label className="text-sm">Mascot pitch (1.0 = as spoken)<input className="input" type="number" min={0.7} max={1.5} step={0.02} value={s.dialogue.mascot_pitch} onChange={(e) => set(["dialogue", "mascot_pitch"], Number(e.target.value))} /></label>
+          <label className="text-sm">Close-up background blur<input className="input" type="number" min={0} max={0.08} step={0.005} value={s.dialogue.dof} onChange={(e) => set(["dialogue", "dof"], Number(e.target.value))} /></label>
+          <p className="text-xs text-ink-3 md:col-span-4">Mascot voice per engine: Kokoro above; ElevenLabs/Groq use their "mascot" voice when set, else the male voice. The bed dips while anyone speaks.</p>
         </div>
       </Section>
       <LocalServices />

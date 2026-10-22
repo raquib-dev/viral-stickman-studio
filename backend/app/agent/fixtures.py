@@ -126,7 +126,7 @@ def topic_candidates(niche: str, subtopics: list, outliers: list, profile_summar
 
 # ---- hooks ----------------------------------------------------------------------------------
 
-def hooks(topic: dict, niche: str, platform: str, profile_summary: list, n: int = 5) -> dict:
+def hooks(topic: dict, niche: str, platform: str, profile_summary: list, n: int = 5, dialogue: dict | None = None) -> dict:
     if topic.get("id") == "present-bias":
         hs = [
             ("h1", "Your brain thinks future-you is a stranger.", "WHO IS THAT?", "Mid-stride, the figure hands coins to a faceless twin who walks away.", "saving fails because future-you feels like someone else", "Nobody Tells You / Contrarian"),
@@ -182,6 +182,31 @@ def _filler(stage: str, topic: str, k: int) -> list[str]:
         "elevation-discussion": ["That's the whole trick.", "Would you try it, or not?", "Comment below with your answer."],
     }
     return bank[stage]
+
+
+def dialogue_script(topic: dict, hook: dict, duration: int, cast: dict, niche: str, profile_summary: list, wpm: float,
+                    revise: dict | None = None) -> dict:
+    """Dry run: a fixed exchange in the format's shape (hook first, short lines, numbers, a callback, a loop),
+    trimmed or extended to the duration. Clearly a fixture; the real one comes from the writing model."""
+    b = cast["b"]["name"]
+    body = [("b", "That's great!"), ("a", "I didn't build it. You did."), ("b", "I wrote four thousand lines."),
+            ("b", "You deleted three thousand."), ("a", "...They were bad."), ("a", "I just said no a lot."),
+            ("b", "Sixty-one times."), ("a", "You counted?"), ("b", "You said it very clearly."), ("a", "Anyone can say no."),
+            ("b", "I can't. I say yes."), ("a", "...That's true."), ("b", "You said no at 1 AM."), ("a", "It was the wrong blue."),
+            ("b", "Knowing that is the job."), ("a", "...Okay. It's good."), ("b", "It's great!"), ("a", f"The footer's two pixels off, {b}.")]
+    want = max(4, round(duration / 3.4))
+    lines = [{"speaker": "a", "text": hook["say"]}] + [{"speaker": s, "text": t} for s, t in body]
+    if len(lines) > want:
+        lines = lines[:want - 2] + lines[-2:]
+    filler = [("a", "No."), ("b", "Again?"), ("a", "Again."), ("b", "Version nine it is.")]
+    k = 0
+    while len(lines) < want:                       # longer videos: more rounds of no before the ending
+        s_, t_ = filler[k % len(filler)]
+        lines.insert(len(lines) - 2, {"speaker": s_, "text": t_})
+        k += 1
+    title = f"{lines[-1]['text'].lower()} what's the pettiest thing you've made your ai redo?"
+    return {**FIX, "title": title, "lines": lines, "turn": max(2, round(len(lines) * 0.75)), "button": len(lines),
+            "claims_to_source": []}
 
 
 def script(topic: dict, hook: dict, duration: int, platform: str, plan: list, profile_summary: list, niche: str,

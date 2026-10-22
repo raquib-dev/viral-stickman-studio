@@ -24,9 +24,11 @@ export const EXPRESSIONS = {
   skeptical: { browY: 0, browTilt: -0.15, browAsym: 0.65, eye: 0.8, smile: -0.1, open: 0, lookX: -0.15, lookY: 0, tilt: -0.1 },
 };
 
-export const GESTURES = ["point", "present", "think", "facepalm", "hips", "crossed", "shrug", "cheer", "hold", "explain"];
+export const GESTURES = ["point", "present", "think", "facepalm", "hips", "crossed", "shrug", "cheer", "hold", "explain", "rest"];
 export const HATS = ["none", "cap", "tophat", "crown", "helmet", "headband", "beanie"];
 export const LOOKS = ["camera", "left", "right", "up", "down"];
+export const HAIR_STYLES = ["long", "bob", "short", "ponytail", "bun", "none"];
+export const GLASSES = ["round", "square", "none"];
 
 // Stick-figure proportions (metres). Only bone DIRECTIONS come from the rig's animation; lengths are
 // ours, so the figure keeps classic stickman proportions whatever the source character looked like.
@@ -35,6 +37,22 @@ const LEN = { spine: 0.5, neck: 0.07, shoulder: 0.05, upperArm: 0.3, lowerArm: 0
 const ANKLE = 0.045;          // ankle height above the floor in the rest pose
 const LIMB_R = 0.034;
 const SPINE_R = 0.04;
+
+/** Body builds. "stick" is the classic stick figure (the constants above, unchanged). "chibi" is a stylised
+ *  person: a big head, short limbs, puffy sleeves and a jacket torso. k scales gesture reach to arm length. */
+export const BUILDS = {
+  stick: { headR: HEAD_R, len: LEN, ankle: ANKLE, limbR: LIMB_R, spineR: SPINE_R, k: 1, headY: 1.62, size: 1 },
+  chibi: {
+    headR: 0.235, ankle: 0.05, limbR: 0.058, spineR: 0.125, neckR: 0.045, shoulderR: 0.085, handR: 0.06, footR: 0.07,
+    len: { spine: 0.34, neck: 0.03, shoulder: 0.07, upperArm: 0.2, lowerArm: 0.19, hip: 0.07, upperLeg: 0.27, lowerLeg: 0.26 },
+  },
+};
+{
+  const c = BUILDS.chibi, L = c.len;
+  c.k = (L.upperArm + L.lowerArm) / (LEN.upperArm + LEN.lowerArm);
+  c.headY = L.upperLeg + L.lowerLeg + c.ankle + L.spine + L.neck + c.headR * 0.92;
+  c.size = c.headY / BUILDS.stick.headY;
+}
 
 // Bone names for each logical joint across common humanoid rigs: this project's CC0 rig, Quaternius /
 // Unreal mannequin (upperarm_l, thigh_l...), Mixamo (mixamorig:LeftArm...) and Blender (upper_arm.L...).
@@ -117,6 +135,9 @@ export class Stickman {
   constructor(gltfSource, opts = {}) {
     const { SkeletonUtils } = opts;
     this.opts = { color: "#f1ece4", seed: 1, ...opts };
+    this.P = BUILDS[opts.build] ?? BUILDS.stick;
+    this.headY = this.P.headY;   // head-centre height at rest (camera shots frame from it)
+    this.size = this.P.size;     // relative to the stick figure (shot distances scale with it)
     this.group = new THREE.Group();
     // skeleton sources: the base CC0 rig, plus an optional humanoid animation pack (any naming scheme).
     // Only bone DIRECTIONS are read from them, so different skeletons blend and retarget cleanly.
@@ -181,7 +202,7 @@ export class Stickman {
     this.sources.forEach((s) => { s.w = s === src ? 1 : 0; });
     const hips = this._p("Hips", new THREE.Vector3(), src);
     const legs = this._legChain(hips, "L", 1);
-    src.hipScale = (hips.y - legs[2].y + ANKLE) / Math.max(1e-6, hips.y);
+    src.hipScale = (hips.y - legs[2].y + this.P.ankle) / Math.max(1e-6, hips.y);
     this.sources.forEach((s, i) => { s.w = saved[i]; });
     const hq = new THREE.Quaternion();
     src.joint("Head").getWorldQuaternion(hq);
@@ -222,20 +243,21 @@ export class Stickman {
   }
 
   _legChain(hipsPos, side, _k) {
-    const a = hipsPos.clone().addScaledVector(this._dir("Hips", `UpperLeg.${side}`), LEN.hip);
-    const b = a.clone().addScaledVector(this._dir(`UpperLeg.${side}`, `LowerLeg.${side}`), LEN.upperLeg);
-    const c = b.clone().addScaledVector(this._dir(`LowerLeg.${side}`, `Foot.${side}`), LEN.lowerLeg);
+    const a = hipsPos.clone().addScaledVector(this._dir("Hips", `UpperLeg.${side}`), this.P.len.hip);
+    const b = a.clone().addScaledVector(this._dir(`UpperLeg.${side}`, `LowerLeg.${side}`), this.P.len.upperLeg);
+    const c = b.clone().addScaledVector(this._dir(`LowerLeg.${side}`, `Foot.${side}`), this.P.len.lowerLeg);
     return [a, b, c];
   }
 
   _armChain(chest, side) {
-    const a = chest.clone().addScaledVector(this._dir("Neck", `UpperArm.${side}`).setY(0).normalize(), LEN.shoulder);
-    const b = a.clone().addScaledVector(this._dir(`UpperArm.${side}`, `LowerArm.${side}`), LEN.upperArm);
-    const c = b.clone().addScaledVector(this._dir(`LowerArm.${side}`, `Palm2.${side}`), LEN.lowerArm);
+    const a = chest.clone().addScaledVector(this._dir("Neck", `UpperArm.${side}`).setY(0).normalize(), this.P.len.shoulder);
+    const b = a.clone().addScaledVector(this._dir(`UpperArm.${side}`, `LowerArm.${side}`), this.P.len.upperArm);
+    const c = b.clone().addScaledVector(this._dir(`LowerArm.${side}`, `Palm2.${side}`), this.P.len.lowerArm);
     return [a, b, c];
   }
 
   _build() {
+    if (this.opts.build === "chibi") return this._buildChibi();
     // clay = soft studio plastic; toon = matte, flatter shading for the illustrated styles
     const mat = this.opts.material === "toon"
       ? new THREE.MeshLambertMaterial({ color: this.opts.color, flatShading: true })
@@ -257,17 +279,17 @@ export class Stickman {
       return m;
     };
     this.segs = {
-      spine: cyl(SPINE_R), neck: cyl(LIMB_R * 0.9),
-      uaL: cyl(LIMB_R), laL: cyl(LIMB_R * 0.95), uaR: cyl(LIMB_R), laR: cyl(LIMB_R * 0.95),
-      ulL: cyl(LIMB_R * 1.1), llL: cyl(LIMB_R), ulR: cyl(LIMB_R * 1.1), llR: cyl(LIMB_R),
-      shL: cyl(LIMB_R), shR: cyl(LIMB_R), hpL: cyl(LIMB_R * 1.1), hpR: cyl(LIMB_R * 1.1),
+      spine: cyl(this.P.spineR), neck: cyl(this.P.limbR * 0.9),
+      uaL: cyl(this.P.limbR), laL: cyl(this.P.limbR * 0.95), uaR: cyl(this.P.limbR), laR: cyl(this.P.limbR * 0.95),
+      ulL: cyl(this.P.limbR * 1.1), llL: cyl(this.P.limbR), ulR: cyl(this.P.limbR * 1.1), llR: cyl(this.P.limbR),
+      shL: cyl(this.P.limbR), shR: cyl(this.P.limbR), hpL: cyl(this.P.limbR * 1.1), hpR: cyl(this.P.limbR * 1.1),
     };
     this.joints = {
-      hips: ball(SPINE_R * 1.25), chest: ball(SPINE_R * 1.2),
-      shL: ball(LIMB_R * 1.15), shR: ball(LIMB_R * 1.15), hpL: ball(LIMB_R * 1.2), hpR: ball(LIMB_R * 1.2),
-      elL: ball(LIMB_R * 1.2), elR: ball(LIMB_R * 1.2), knL: ball(LIMB_R * 1.25), knR: ball(LIMB_R * 1.25),
-      handL: ball(LIMB_R * 1.9, 0), handR: ball(LIMB_R * 1.9, 0),
-      footL: ball(LIMB_R * 1.7, 0), footR: ball(LIMB_R * 1.7, 0),
+      hips: ball(this.P.spineR * 1.25), chest: ball(this.P.spineR * 1.2),
+      shL: ball(this.P.limbR * 1.15), shR: ball(this.P.limbR * 1.15), hpL: ball(this.P.limbR * 1.2), hpR: ball(this.P.limbR * 1.2),
+      elL: ball(this.P.limbR * 1.2), elR: ball(this.P.limbR * 1.2), knL: ball(this.P.limbR * 1.25), knR: ball(this.P.limbR * 1.25),
+      handL: ball(this.P.limbR * 1.9, 0), handR: ball(this.P.limbR * 1.9, 0),
+      footL: ball(this.P.limbR * 1.7, 0), footR: ball(this.P.limbR * 1.7, 0),
     };
     this.joints.footL.scale.set(1, 0.55, 1.7);
     this.joints.footR.scale.set(1, 0.55, 1.7);
@@ -289,10 +311,10 @@ export class Stickman {
     // head: faceted icosphere + face parts in a group that follows the Head bone
     this.head = new THREE.Group();
     this.group.add(this.head);
-    const skull = new THREE.Mesh(new THREE.IcosahedronGeometry(HEAD_R, 1), mat);
+    const skull = new THREE.Mesh(new THREE.IcosahedronGeometry(this.P.headR, 1), mat);
     skull.castShadow = true;
     this.head.add(skull);
-    const r = HEAD_R, onSkin = (x, y) => Math.sqrt(Math.max(0, r * r - x * x - y * y)) * 0.97;
+    const r = this.P.headR, onSkin = (x, y) => Math.sqrt(Math.max(0, r * r - x * x - y * y)) * 0.97;
     this.eyes = [-1, 1].map((sx) => {
       const g = new THREE.Group();
       const x = sx * r * 0.36, y = r * 0.06;
@@ -328,9 +350,199 @@ export class Stickman {
     }
   }
 
+  /** A stylised person: elliptical faceted head (face shape from `appearance.face`, nudged per `variant`), dot
+   *  eyes, glasses, headphones, hair styles, and clothes coloured per part. Same skeleton, motion and face code. */
+  _buildChibi() {
+    const ap = { skin: "#f1c7a5", hair: "#2b1d16", hair_style: "long", top: "#f2b31b", shirt: "#1d1d22", bottom: "#2c3140",
+      shoes: "#2a2a2e", glasses: "round", headphones: true, headphones_color: "#d9d9de", variant: 0, ...(this.opts.appearance ?? {}) };
+    const f0 = { width: 1.0, height: 0.96, depth: 0.92, jaw: 0.22, eye_spacing: 0.34, eye_y: -0.02, eye_size: 1.0, mouth_y: -0.42,
+      ...(ap.face ?? {}) };
+    // slight, repeatable face variation per variant number (the same person, a little different)
+    const jitter = (k, amt) => (ap.variant ? (hash(k, ap.variant) - 0.5) * 2 * amt : 0);
+    const F = { width: f0.width * (1 + jitter(1, 0.05)), height: f0.height * (1 + jitter(2, 0.05)), depth: f0.depth,
+      jaw: Math.max(0, f0.jaw + jitter(3, 0.08)), eye_spacing: f0.eye_spacing * (1 + jitter(4, 0.08)),
+      eye_y: f0.eye_y + jitter(5, 0.04), eye_size: f0.eye_size * (1 + jitter(6, 0.1)), mouth_y: f0.mouth_y + jitter(7, 0.03) };
+    this.face = F;
+    this.fixedColors = true;
+    this.bendy = true;
+    const std = (color, rough = 0.62) => new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0, flatShading: true });
+    const M = { skin: std(ap.skin, 0.55), top: std(ap.top, 0.7), shirt: std(ap.shirt, 0.8), bottom: std(ap.bottom, 0.8),
+      shoes: std(ap.shoes, 0.6), hair: std(ap.hair, 0.5), dark: new THREE.MeshStandardMaterial({ color: "#141012", roughness: 0.3 }),
+      phones: std(ap.headphones_color, 0.4) };
+    this.mats = M;
+    this.mat = M.skin;
+    const ball = (r, mat, detail = 1) => {
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, detail), mat);
+      m.castShadow = true;
+      this.group.add(m);
+      return m;
+    };
+    const P = this.P;
+    this.segs = {};
+    this.joints = {
+      hips: ball(P.spineR * 1.05, M.bottom), chest: ball(P.spineR * 1.02, M.top),
+      shL: ball(P.shoulderR, M.top), shR: ball(P.shoulderR, M.top), hpL: ball(P.limbR, M.bottom), hpR: ball(P.limbR, M.bottom),
+      elL: ball(P.limbR, M.top), elR: ball(P.limbR, M.top), knL: ball(P.limbR, M.bottom), knR: ball(P.limbR, M.bottom),
+      handL: ball(P.handR, M.skin), handR: ball(P.handR, M.skin), footL: ball(P.footR, M.shoes), footR: ball(P.footR, M.shoes),
+    };
+    // only hands and shoes show; the rest are inside the clothes (a chest ball read as a scarf under the chin)
+    for (const k of ["elL", "elR", "knL", "knR", "hpL", "hpR", "chest"]) this.joints[k].visible = false;
+    this.joints.footL.scale.set(0.9, 0.55, 1.5);
+    this.joints.footR.scale.set(0.9, 0.55, 1.5);
+    this.tubes = {};
+    const tubeMat = { spine: M.top, neck: M.skin, armL: M.top, armR: M.top, legL: M.bottom, legR: M.bottom,
+      shL: M.top, shR: M.top, hpL: M.bottom, hpR: M.bottom };
+    for (const [k, m] of Object.entries(tubeMat)) {
+      const t = new Tube(m, 10, k.startsWith("arm") || k.startsWith("leg") ? 14 : 8);
+      this.group.add(t.mesh);
+      this.tubes[k] = t;
+    }
+    // inner shirt and a puffy collar, placed on the chest every frame (decorate)
+    this.shirt = new THREE.Mesh(new THREE.BoxGeometry(P.spineR * 0.55, P.len.spine * 0.75, 0.012), M.shirt);
+    this.collar = new THREE.Mesh(new THREE.TorusGeometry(P.spineR * 0.42, P.spineR * 0.16, 6, 18), M.top);
+    this.collar.castShadow = true;
+    this.group.add(this.shirt, this.collar);
+    this.collar.visible = !!ap.collar;
+
+    // head: an ellipsoid with a tapered jaw
+    this.head = new THREE.Group();
+    this.group.add(this.head);
+    const r = P.headR;
+    const geo = new THREE.IcosahedronGeometry(r, 3);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      let x = pos.getX(i) * F.width, y = pos.getY(i) * F.height, z = pos.getZ(i) * F.depth;
+      if (y < 0) { const d = Math.pow(-y / (r * F.height), 1.6); x *= 1 - F.jaw * d; z *= 1 - F.jaw * 0.5 * d; }
+      pos.setXYZ(i, x, y, z);
+    }
+    geo.computeVertexNormals();
+    const skull = new THREE.Mesh(geo, M.skin);
+    skull.castShadow = true;
+    this.head.add(skull);
+    const onSkin = (x, y) => {
+      const ny = y / (r * F.height), jaw = y < 0 ? 1 - F.jaw * Math.pow(-ny, 1.6) : 1;
+      const nx = x / (r * F.width * jaw);
+      return r * F.depth * (y < 0 ? 1 - F.jaw * 0.5 * Math.pow(-ny, 1.6) : 1) * Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny)) * 0.985;
+    };
+    this.onSkin = onSkin;
+    // dot eyes with one small highlight
+    const shine = new THREE.MeshBasicMaterial({ color: "#ffffff" });
+    this.eyes = [-1, 1].map((sx) => {
+      const g = new THREE.Group();
+      const x = sx * r * F.eye_spacing, y = r * F.eye_y;
+      g.position.set(x, y, onSkin(x, y) - r * 0.015);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(r * 0.072 * F.eye_size, 12, 8), M.dark);
+      dot.scale.set(0.9, 1.12, 0.5);
+      const hl = new THREE.Mesh(new THREE.SphereGeometry(r * 0.02 * F.eye_size, 6, 4), shine);
+      hl.position.set(r * 0.025, r * 0.03, r * 0.03);
+      g.add(dot, hl);
+      g.userData = { x, y };
+      this.head.add(g);
+      return g;
+    });
+    this.brows = [-1, 1].map((sx) => {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(r * 0.2, r * 0.03, r * 0.03), M.dark);
+      b.userData = { sx, x: sx * r * F.eye_spacing, y: r * (F.eye_y + 0.38) };
+      this.head.add(b);
+      return b;
+    });
+    const arc = Math.PI * 0.6;
+    this.mouthSmile = new THREE.Mesh(new THREE.TorusGeometry(r * 0.075, r * 0.016, 4, 12, arc), M.dark);
+    this.mouthSmile.userData.arc = arc;
+    this.mouthOpen = new THREE.Mesh(new THREE.SphereGeometry(r * 0.065, 12, 8), new THREE.MeshStandardMaterial({ color: "#5a2420", roughness: 0.6 }));
+    this.mouthY = r * F.mouth_y;
+    this.head.add(this.mouthSmile, this.mouthOpen);
+    this._hair(ap, F, M.hair);
+    if (ap.glasses && ap.glasses !== "none") this._glasses(ap.glasses, F, M.dark);
+    if (ap.headphones) this._headphones(F, M.phones);
+    this.blinks = [];
+    for (let t = 1.2 + hash(1, this.opts.seed) * 1.5, k = 0; t < 600; k++) {
+      this.blinks.push(t);
+      t += 2.6 + hash(k + 2, this.opts.seed) * 2.6;
+    }
+    this.decorate = ({ chest, up, fwd }) => {
+      const side = new THREE.Vector3().crossVectors(up, fwd).normalize();
+      const basis = new THREE.Matrix4().makeBasis(side, up, fwd);
+      this.shirt.quaternion.setFromRotationMatrix(basis);
+      this.shirt.position.copy(chest).addScaledVector(up, -P.len.spine * 0.36).addScaledVector(fwd, P.spineR * 1.0);
+      this.collar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
+      this.collar.position.copy(chest).addScaledVector(up, P.len.neck * 0.6 + 0.01);
+    };
+  }
+
+  _hair(ap, F, mat) {
+    const r = this.P.headR, add = (geo, p = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(...p); m.rotation.set(...rot); m.scale.set(...scale);
+      m.castShadow = true;
+      this.head.add(m);
+      return m;
+    };
+    const style = ap.hair_style ?? "long";
+    if (style === "none") return;
+    mat.side = THREE.DoubleSide;
+    // a shell around the head with an oval opening for the face: a curved hairline that frames the cheeks
+    const shell = new THREE.SphereGeometry(1, 40, 28).toNonIndexed();
+    const sp = shell.attributes.position, keep = [];
+    for (let i = 0; i < sp.count; i += 3) {
+      let cx = 0, cy = 0, cz = 0;
+      for (let k = 0; k < 3; k++) { cx += sp.getX(i + k) / 3; cy += sp.getY(i + k) / 3; cz += sp.getZ(i + k) / 3; }
+      const face = cz > 0.15 && (cx / 0.74) ** 2 + ((cy + 0.12) / 0.66) ** 2 < 1;
+      const chin = cy < -0.55 && cz > -0.2;            // never under the chin or across the jaw
+      if (!face && !chin) for (let k = 0; k < 3; k++) keep.push(sp.getX(i + k), sp.getY(i + k), sp.getZ(i + k));
+    }
+    const hairGeo = new THREE.BufferGeometry();
+    hairGeo.setAttribute("position", new THREE.Float32BufferAttribute(keep, 3));
+    hairGeo.computeVertexNormals();
+    add(hairGeo, [0, r * 0.02, -r * 0.01], [0, 0, 0], [r * F.width * 1.06, r * F.height * 1.06, r * F.depth * 1.08]);
+    const len = { long: r * 2.7, bob: r * 1.25, ponytail: 0, bun: 0, short: 0 }[style] ?? 0;
+    if (len) {
+      // the back and sides fall straight down from ear level, a little wider at the ends
+      add(new THREE.CylinderGeometry(r * F.width * 1.03, r * F.width * 1.14, len, 26, 1, true, Math.PI * 0.44, Math.PI * 1.12),
+        [0, r * 0.3 - len / 2, -r * 0.1], [0, 0, 0], [1, 1, F.depth * 0.98]);
+    }
+    if (style === "ponytail") add(new THREE.CylinderGeometry(r * 0.14, r * 0.05, r * 1.6, 10), [0, -r * 0.35, -r * 1.05], [0.45, 0, 0]);
+    if (style === "bun") add(new THREE.IcosahedronGeometry(r * 0.36, 1), [0, r * 0.82, -r * 0.42]);
+  }
+
+  _glasses(kind, F, mat) {
+    const r = this.P.headR, square = kind === "square";
+    for (const sx of [-1, 1]) {
+      const x = sx * r * F.eye_spacing, y = r * F.eye_y;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 0.21, r * 0.016, 6, square ? 4 : 30), mat);
+      ring.position.set(x, y, this.onSkin(x, y) + r * 0.05);
+      if (square) ring.rotation.z = Math.PI / 4;
+      this.head.add(ring);
+      // temple arm back to the ear
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(r * 0.02, r * 0.02, r * 0.6), mat);
+      arm.position.set(sx * r * F.width * 0.97, y + r * 0.02, -r * 0.05);
+      this.head.add(arm);
+    }
+    const bridge = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.012, r * 0.012, r * (2 * F.eye_spacing - 0.42), 6), mat);
+    bridge.rotation.z = Math.PI / 2;
+    bridge.position.set(0, r * (F.eye_y + 0.04), this.onSkin(0, r * F.eye_y) + r * 0.06);
+    this.head.add(bridge);
+  }
+
+  _headphones(F, mat) {
+    const r = this.P.headR;
+    const band = new THREE.Mesh(new THREE.TorusGeometry(r * F.width * 1.07, r * 0.04, 6, 26, Math.PI), mat);
+    band.position.set(0, -r * 0.02, -r * 0.18);
+    band.rotation.x = -0.3;
+    band.castShadow = true;
+    this.head.add(band);
+    for (const sx of [-1, 1]) {
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.22, r * 0.22, r * 0.16, 18), mat);
+      cup.rotation.z = Math.PI / 2;
+      cup.position.set(sx * r * F.width * 1.08, -r * 0.02, -r * 0.1);
+      cup.castShadow = true;
+      this.head.add(cup);
+    }
+  }
+
   _hat(kind) {
     if (!kind || kind === "none") return;
-    const r = HEAD_R, g = new THREE.Group();
+    const r = this.P.headR, g = new THREE.Group();
     const m = new THREE.MeshStandardMaterial({ color: this.opts.hatColor ?? "#2b2f3a", flatShading: true, roughness: 0.7 });
     const gold = new THREE.MeshStandardMaterial({ color: "#e2b13c", flatShading: true, roughness: 0.35, metalness: 0.6 });
     const add = (geo, mat, pos, rot = [0, 0, 0]) => { const x = new THREE.Mesh(geo, mat); x.position.set(...pos); x.rotation.set(...rot); x.castShadow = true; g.add(x); };
@@ -360,16 +572,18 @@ export class Stickman {
   /** Hand target + elbow hint for a gesture, in actor space. side = +1 for L (at +X), -1 for R. */
   _gestureTarget(g, side, L, t, target) {
     const { chest, headC, hips, sh } = L;
-    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    // offsets are in stick-figure metres; a smaller build reaches proportionally less far
+    const k = this.P.k, V = (x, y, z) => new THREE.Vector3(x * k, y * k, z * k);
     switch (g.gesture) {
-      case "think": return [headC.clone().add(V(side * 0.03, -HEAD_R * 1.05, HEAD_R * 0.75)), V(side * 0.5, -1, 0.6)];
-      case "facepalm": return [headC.clone().add(V(side * 0.02, -HEAD_R * 0.1, HEAD_R * 1.05)), V(side * 0.8, -1, 0.2)];
+      case "think": return [headC.clone().add(V(side * 0.03, -this.P.headR * 1.05, this.P.headR * 0.75)), V(side * 0.5, -1, 0.6)];
+      case "facepalm": return [headC.clone().add(V(side * 0.02, -this.P.headR * 0.1, this.P.headR * 1.05)), V(side * 0.8, -1, 0.2)];
       case "hips": return [hips.clone().add(V(side * 0.15, 0.02, 0.03)), V(side, 0.3, -0.7)];
       case "crossed": return [chest.clone().add(V(-side * 0.11, -0.16, 0.13 + (side > 0 ? 0.03 : 0))), V(side, -0.7, 0.3)];
       case "shrug": return [chest.clone().add(V(side * 0.4, -0.2, 0.22)), V(side * 0.5, -1, -0.2)];
       case "cheer": return [headC.clone().add(V(side * 0.3, 0.42, 0.02)), V(side, 0, 0)];
       case "present": return [chest.clone().add(V(side * 0.5, -0.12, 0.36)), V(side * 0.3, -1, -0.3)];
       case "hold": return [chest.clone().add(V(side * 0.13, -0.24, 0.3)), V(side, -1, 0)];
+      case "rest": return [chest.clone().add(V(side * 0.17, -0.3, 0.36)), V(side, -0.6, -0.4)];
       case "explain": {
         const w = Math.sin(t * 3.1 + side) * 0.06;
         return [chest.clone().add(V(side * 0.3, -0.22 + w, 0.3)), V(side, -1, -0.2)];
@@ -381,7 +595,7 @@ export class Stickman {
         dir.z = Math.max(dir.z, 0.35);
         dir.y = clamp(dir.y, -0.35, 0.45);
         dir.normalize();
-        return [sh.clone().addScaledVector(dir, (LEN.upperArm + LEN.lowerArm) * 0.9), V(0, -1, -0.2)];
+        return [sh.clone().addScaledVector(dir, (this.P.len.upperArm + this.P.len.lowerArm) * 0.9), V(0, -1, -0.2)];
       }
     }
   }
@@ -493,16 +707,16 @@ export class Stickman {
     const breath = Math.sin(t * Math.PI * 2 * 0.27 + seed);
     const hips = animHips.clone().add(new THREE.Vector3(sway, -(0.014 + Math.abs(sway) * 0.3) * idleW, 0));
     const lean = spineDir.clone().add(new THREE.Vector3(-sway * 0.6, 0, 0.02 * idleW)).normalize();
-    const chest = hips.clone().addScaledVector(lean, LEN.spine).addScaledVector(up, 0.006 * breath);
+    const chest = hips.clone().addScaledVector(lean, this.P.len.spine).addScaledVector(up, 0.006 * breath);
     // legs: IK from the (shifted) hips to the planted ankles, knees bending the way the animation bends them
     const legs = {};
     for (const sd of ["L", "R"]) {
       const [, k0, an] = animLegs[sd];
-      const hp = hips.clone().addScaledVector(this._dir("Hips", `UpperLeg.${sd}`), LEN.hip);
+      const hp = hips.clone().addScaledVector(this._dir("Hips", `UpperLeg.${sd}`), this.P.len.hip);
       // knees bend forward (the way the body faces), following the animation's bend only in depth
       const bend = k0.clone().sub(an.clone().add(animLegs[sd][0]).multiplyScalar(0.5));
       const pole = new THREE.Vector3(bend.x * 0.15, 0, Math.max(0.05, bend.z + 0.05));
-      const [kn, ank] = Stickman.ik(hp, an, LEN.upperLeg, LEN.lowerLeg, pole, 0.985);
+      const [kn, ank] = Stickman.ik(hp, an, this.P.len.upperLeg, this.P.len.lowerLeg, pole, 0.985);
       legs[sd] = [hp, kn, ank];
     }
     // arms: animation, then a relaxed hang when idle, beats that follow the voice, then gestures
@@ -510,7 +724,7 @@ export class Stickman {
     const talking = clamp(em * 2.2);
     const arms = {};
     const busy = { L: 0, R: 0 };
-    const landmarks = { chest, headC: chest.clone().addScaledVector(up, LEN.neck + HEAD_R * 0.92), hips };
+    const landmarks = { chest, headC: chest.clone().addScaledVector(up, this.P.len.neck + this.P.headR * 0.92), hips };
     for (const g of actor.gestures ?? []) {
       const dur = g.dur ?? 1.8;
       if (t < g.t - 0.05 || t > g.t + dur + 0.4) continue;
@@ -528,16 +742,16 @@ export class Stickman {
       const hangW = idleW * (0.65 + 0.25 * clamp((out - 0.45) / 0.5)) * free;
       if (hangW > 0.01) {
         const swing = noise1(t * 0.35 + (sg > 0 ? 0 : 9), seed) * 0.03;
-        const T = sh.clone().add(new THREE.Vector3(sg * 0.06, -0.55, 0.05 + swing));
-        const [E, H] = Stickman.ik(sh, T, LEN.upperArm, LEN.lowerArm, new THREE.Vector3(sg * 0.12, 0, -1));
+        const T = sh.clone().add(new THREE.Vector3(sg * 0.06, -0.55, 0.05 + swing).multiplyScalar(this.P.k));
+        const [E, H] = Stickman.ik(sh, T, this.P.len.upperArm, this.P.len.lowerArm, new THREE.Vector3(sg * 0.12, 0, -1));
         el = el.lerp(E, hangW); wr = wr.lerp(H, hangW);
       }
       // talking beats: the hands lift and settle with the stress of the speech (right hand leads)
       const beatW = talking * free * (sd === "R" ? 0.55 : 0.35);
       if (beatW > 0.01) {
         const lift = this._emphasis(actor, t - (sd === "R" ? 0 : 0.12));
-        const T = chest.clone().add(new THREE.Vector3(sg * 0.24, -0.33 + 0.16 * lift, 0.22 + 0.05 * lift));
-        const [E, H] = Stickman.ik(sh, T, LEN.upperArm, LEN.lowerArm, new THREE.Vector3(sg, -1, -0.3));
+        const T = chest.clone().add(new THREE.Vector3(sg * 0.24, -0.33 + 0.16 * lift, 0.22 + 0.05 * lift).multiplyScalar(this.P.k));
+        const [E, H] = Stickman.ik(sh, T, this.P.len.upperArm, this.P.len.lowerArm, new THREE.Vector3(sg, -1, -0.3));
         el = el.lerp(E, beatW); wr = wr.lerp(H, beatW);
       }
       arms[sd] = [sh, el, wr];
@@ -552,7 +766,7 @@ export class Stickman {
         const sg = sd === "L" ? 1 : -1;
         const [sh, el, wr] = arms[sd];
         const [T, pole] = this._gestureTarget(g, sg, { ...landmarks, sh }, t, tgt);
-        const [E, H] = Stickman.ik(sh, T, LEN.upperArm, LEN.lowerArm, pole);
+        const [E, H] = Stickman.ik(sh, T, this.P.len.upperArm, this.P.len.lowerArm, pole);
         arms[sd] = [sh, el.clone().lerp(E, k), wr.clone().lerp(H, k)];
       }
     }
@@ -573,26 +787,27 @@ export class Stickman {
     for (const sd of ["L", "R"]) {
       const [sh] = P.arms[sd];
       const elB = trail(sd, 1, 0.72, 0.2, 0.08), wrB = trail(sd, 2, 0.52, 0.3, 0.18);
-      const el = sh.clone().addScaledVector(elB.sub(sh).normalize(), LEN.upperArm);
-      const wr = el.clone().addScaledVector(wrB.sub(el).normalize(), LEN.lowerArm);
+      const el = sh.clone().addScaledVector(elB.sub(sh).normalize(), this.P.len.upperArm);
+      const wr = el.clone().addScaledVector(wrB.sub(el).normalize(), this.P.len.lowerArm);
       P.arms[sd] = [sh, el, wr];
     }
     const { hips, chest, up, lean, legs, arms } = P;
     this.hands = { L: arms.L[2], R: arms.R[2] };
-    const neckTop = chest.clone().addScaledVector(up, LEN.neck);
-    const headC = neckTop.clone().addScaledVector(up, HEAD_R * 0.92);
+    const neckTop = chest.clone().addScaledVector(up, this.P.len.neck);
+    const headC = neckTop.clone().addScaledVector(up, this.P.headR * 0.92);
     const J = this.joints;
     const fwd = lean.clone().cross(this._dir("UpperLeg.R", "UpperLeg.L")).normalize();
     if (this.bendy) {
       const T = this.tubes, mid = (a, b, bend = 0) => a.clone().lerp(b, 0.5).addScaledVector(fwd, bend);
-      T.spine.update(hips, mid(hips, chest, 0.012 + 0.01 * P.breath), chest, SPINE_R * 1.05, SPINE_R * 0.95, fwd);
-      T.neck.update(chest, mid(chest, headC), headC, LIMB_R * 0.95, LIMB_R * 0.85, fwd);
+      T.spine.update(hips, mid(hips, chest, 0.012 + 0.01 * P.breath), chest, this.P.spineR * 1.05, this.P.spineR * 0.95, fwd);
+      const neckR = this.P.neckR ?? this.P.limbR * 0.95;
+      T.neck.update(chest, mid(chest, headC), headC, neckR, neckR * 0.9, fwd);
       for (const sd of ["L", "R"]) {
         const [sh, el, wr] = arms[sd], [hp, kn, an] = legs[sd];
-        T[`arm${sd}`].update(sh, el, wr, LIMB_R * 1.05, LIMB_R * 0.85, fwd);
-        T[`leg${sd}`].update(hp, kn, an, LIMB_R * 1.15, LIMB_R * 0.9, fwd);
-        T[`sh${sd}`].update(chest, mid(chest, sh), sh, LIMB_R, LIMB_R, fwd);
-        T[`hp${sd}`].update(hips, mid(hips, hp), hp, LIMB_R * 1.1, LIMB_R * 1.1, fwd);
+        T[`arm${sd}`].update(sh, el, wr, this.P.limbR * 1.05, this.P.limbR * 0.85, fwd);
+        T[`leg${sd}`].update(hp, kn, an, this.P.limbR * 1.15, this.P.limbR * 0.9, fwd);
+        T[`sh${sd}`].update(chest, mid(chest, sh), sh, this.P.shoulderR ?? this.P.limbR, this.P.shoulderR ? this.P.limbR * 1.05 : this.P.limbR, fwd);
+        T[`hp${sd}`].update(hips, mid(hips, hp), hp, this.P.limbR * 1.1, this.P.limbR * 1.1, fwd);
       }
     } else {
       const seg = (m, a, b) => {
@@ -602,7 +817,7 @@ export class Stickman {
         m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
       };
       const S = this.segs;
-      seg(S.spine, hips, chest); seg(S.neck, chest, neckTop.clone().addScaledVector(up, HEAD_R * 0.3));
+      seg(S.spine, hips, chest); seg(S.neck, chest, neckTop.clone().addScaledVector(up, this.P.headR * 0.3));
       seg(S.uaL, arms.L[0], arms.L[1]); seg(S.laL, arms.L[1], arms.L[2]); seg(S.uaR, arms.R[0], arms.R[1]); seg(S.laR, arms.R[1], arms.R[2]);
       seg(S.ulL, legs.L[0], legs.L[1]); seg(S.llL, legs.L[1], legs.L[2]); seg(S.ulR, legs.R[0], legs.R[1]); seg(S.llR, legs.R[1], legs.R[2]);
       seg(S.shL, chest, arms.L[0]); seg(S.shR, chest, arms.R[0]); seg(S.hpL, hips, legs.L[0]); seg(S.hpR, hips, legs.R[0]);
@@ -618,18 +833,19 @@ export class Stickman {
     // head: the rig's head rotation, then look-at, then life (nods with the speech, small glances, a tilt)
     this.head.quaternion.copy(this._headQuat());
     this.head.position.copy(headC);
-    const lk = this._look(actor.look, t, ctx, headC);
+    const lk = this._look(actor.look, t, ctx, headC, actor.gaze_max ?? 1.0);
     if (lk) this.head.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(lk.pitch, lk.yaw, 0, "YXZ")));
     const seed = this.opts.seed;
     const e = this._expression(actor.face, actor.talk, t, actor.mouth);
     const nod = 0.09 * (this._emphasis(actor, t) - this._emphasis(actor, t - 0.25));
     const glance = noise1(t * 0.31, seed + 2) * 0.07, tilt = noise1(t * 0.23, seed + 3) * 0.045 + (e.tilt ?? 0);
     this.head.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(nod + 0.015 * P.breath, glance, tilt - P.sway * 1.2, "YXZ")));
-    if (ctx.ink && !actor.color) this.mat.color.copy(ctx.ink);
+    if (ctx.ink && !actor.color && !this.fixedColors) this.mat.color.copy(ctx.ink);
     this._face(e);
+    this.decorate?.({ hips, chest, up, fwd, headC, arms, legs, t });
   }
 
-  _look(track, t, ctx, headC) {
+  _look(track, t, ctx, headC, maxYaw = 1.0) {
     if (!track?.length) return null;
     const angles = (key) => {
       if (!key || key.at === "none") return { yaw: 0, pitch: 0 };
@@ -638,7 +854,7 @@ export class Stickman {
       const w = ctx.resolve ? ctx.resolve(key.at, this.group) : null;
       if (!w) return { yaw: 0, pitch: 0 };
       const d = w.clone().sub(headC);
-      return { yaw: clamp(Math.atan2(d.x, d.z), -1.0, 1.0), pitch: clamp(-Math.atan2(d.y, Math.hypot(d.x, d.z)), -0.45, 0.45) };
+      return { yaw: clamp(Math.atan2(d.x, d.z), -maxYaw, maxYaw), pitch: clamp(-Math.atan2(d.y, Math.hypot(d.x, d.z)), -0.45, 0.45) };
     };
     const [prev, cur, w] = stepFade(track, t, 0.4);
     const a = angles(prev), b = angles(cur), k = ease("inOutSine", w);
@@ -646,7 +862,7 @@ export class Stickman {
   }
 
   _face(e) {
-    const r = HEAD_R;
+    const r = this.P.headR;
     for (const g of this.eyes) {
       const { x, y } = g.userData;
       const nx = x + e.lookX * r * 0.06, ny = y + e.lookY * r * 0.06;
@@ -659,7 +875,7 @@ export class Stickman {
       b.position.set(x, by, this.onSkin(x, by) + r * 0.01);
       b.rotation.set(-0.25, 0, -sx * e.browTilt * 0.5);
     }
-    const my = -r * 0.36;
+    const my = this.mouthY ?? -r * 0.36;
     const z = this.onSkin(0, my);
     const arc = this.mouthSmile.userData.arc;
     const smiling = e.smile >= 0;

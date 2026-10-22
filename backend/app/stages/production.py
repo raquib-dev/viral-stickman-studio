@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from .. import db
+from .. import dialogue as dlg
 from ..agent import tasks
 from ..analysis import blueprint as bp
 from ..analysis.profile import build_profile
@@ -45,7 +46,25 @@ def _clip_specs(ctx, p: dict) -> list[ClipSpec]:
                               vo=s["clips"][k]["vo"] if k < len(s["clips"]) else "",
                               theme=p.get("theme", "dark"), voice_pref=p.get("voice_pref", "male"),
                               style=str(p.get("style", "1")), count=len(b["prompts"])))
+    if dlg.is_dialogue(p):
+        cast = dlg.cast_for(p)
+        plan = dialogue_plan(ctx, s)
+        for sp in specs:
+            sp.lines = s["clips"][sp.index].get("lines") or [] if sp.index < len(s["clips"]) else []
+            sp.cast = cast
+            sp.plan = [plan[ln["i"]] for ln in sp.lines if ln["i"] < len(plan)]
+            # a different look or voice is a different clip: the render step redoes clips whose prompt changed
+            sp.prompt += "\nCAST " + json.dumps(cast, sort_keys=True)
     return specs
+
+
+def dialogue_plan(ctx, script: dict) -> list[dict]:
+    """The saved shot plan when it matches the script's lines, else a fresh one (it is deterministic and free)."""
+    lines = script.get("lines") or [ln for c in script.get("clips", []) for ln in c.get("lines", [])]
+    saved = ctx.read_json("scenes/dialogue.json", default={}) if ctx.path("scenes/dialogue.json").exists() else {}
+    if saved.get("lines") == [{"speaker": ln["speaker"], "text": ln["text"]} for ln in lines] and saved.get("plan"):
+        return saved["plan"]
+    return dlg.plan_shots(lines)
 
 
 def _fmt_eta(sec: float) -> str:
@@ -188,11 +207,40 @@ def CATALOG_STYLE(p: dict, settings: dict) -> str:
     return tj.CATALOG["skill_styles"].get(forced, forced) if forced and forced != "auto" else tj.CATALOG["skill_styles"].get(str(p.get("style", "1")), "minimal")
 
 
+async def _dialogue_scene_plan(ctx) -> dict:
+    """Dialogue shorts: one shot per line (the speaker's close-up, or a wide two-shot), faces and gestures from the
+    words. Deterministic, so it needs no writing-model call; timing is fixed at render, from the real voices."""
+    s = ctx.read_json("script/script.json")
+    lines = s.get("lines") or [ln for c in s["clips"] for ln in c.get("lines", [])]
+    if not lines:
+        raise StageError("the script has no dialogue lines; re-run Script")
+    plan = dlg.plan_shots(lines)
+    cast = dlg.cast_for(ctx.project_data())
+    ctx.write_json("scenes/dialogue.json", {"lines": [{"speaker": ln["speaker"], "text": ln["text"]} for ln in lines],
+                                            "plan": plan, "cast": {k: cast[k]["name"] for k in dlg.SPEAKERS}})
+    index = {}
+    for c in s["clips"]:
+        ps = [plan[ln["i"]] for ln in c.get("lines", [])]
+        index[str(c["index"] + 1)] = {
+            "planned_by": "dialogue", "style": "night", "moods": ["neutral"], "actors": 2, "panels": 0, "badges": [], "props": [],
+            "gestures": sorted({p["gesture"] for p in ps if p.get("gesture")}),
+            "shots": [("wide" if p["shot"] == "wide" else f"close-up {cast[p['shot']]['name']}") for p in ps],
+            "notes": " / ".join(f"{cast[ln['speaker']]['name']}: {ln['text']}" for ln in c.get("lines", [])),
+            "fixes": [], "file": "scenes/dialogue.json", "updated_at": time.time()}
+        ctx.log(f"clip {c['index'] + 1}: " + ", ".join(index[str(c['index'] + 1)]["shots"]))
+    ctx.write_json("scenes/index.json", index)
+    wides = sum(1 for p in plan if p["shot"] == "wide")
+    ctx.log(f"dialogue plan: {len(plan)} lines, {wides} wide shot(s), {len(plan) - wides} close-ups, all hard cuts")
+    return {"outputs": ["scenes/dialogue.json", "scenes/index.json"]}
+
+
 @stage("scene_plan", "Plan 3D scenes",
        description="AI scene plan per clip for the three.js renderer: checked, repaired, keyword plan as fallback.")
 async def scene_plan(ctx) -> dict:
     from ..agent.runner import AgentError
     from ..render import threejs as tj
+    if dlg.is_dialogue(ctx.project_data()):
+        return await _dialogue_scene_plan(ctx)
     if ctx.settings["render"]["backend"] != "local-threejs":
         ctx.log(f"render backend is {ctx.settings['render']['backend']}: 3D scene plans are only used by local-threejs; skipping")
         return {"outputs": []}
@@ -290,6 +338,9 @@ async def render(ctx) -> dict:
     if ctx.dry_run and r["backend"] != "mock":
         ctx.log(f"dry run is on: using the mock backend instead of {r['backend']}", "warn")
     specs = _clip_specs(ctx, p)
+    if dlg.is_dialogue(p) and backend_name not in ("local-threejs", "mock"):
+        raise StageError(f"dialogue shorts render with the three.js renderer (two characters, a cut per line); "
+                         f"Settings → Render → Backend is {backend_name}. Choose local-threejs.")
     if not ctx.dry_run:
         from .studio import placeholders, rewrite_gaps
         gaps = placeholders([{"index": sp.index, "vo": sp.vo} for sp in specs])
@@ -412,6 +463,67 @@ async def render(ctx) -> dict:
     return {"outputs": ["clips/"]}
 
 
+async def _final_qa(ctx, n: int, starts: list[float], events: list) -> dict:
+    """Quality report on the exported file (frames, A/V length, unexpected black dips, caption overlaps)."""
+    qa = await th(st.final_qa, ctx.path("final/final.mp4"), 24.0, starts, events)
+    clip_qa = {k: ctx.read_json(f"clips/clip-{k:02d}.json", default={}).get("meta", {}).get("qa") for k in range(1, n + 1)}
+    qa["clips"] = {k: v for k, v in clip_qa.items() if v}
+    ctx.write_json("final/qa.json", qa)
+    for prob in qa["problems"]:
+        ctx.log("QA: " + prob, "warn")
+    if not qa["problems"]:
+        ctx.log(f"QA: {qa['frames']} frames, audio and video both {qa['video_seconds']:.2f}s, no unexpected black frames, "
+                "no caption overlaps")
+    return qa
+
+
+async def _stitch_dialogue(ctx, p: dict, s: dict, n: int, stitched, starts: list[float], lengths: list[float], w: int, h: int) -> dict:
+    """Dialogue shorts: line captions at the top from the render's own timing (no transcription needed), a quiet
+    room-tone bed under the voices (ducked while anyone speaks), loudness, the quality report."""
+    from ..analysis.transcript import Word
+    metas = [ctx.read_json(f"clips/clip-{k:02d}.json", default={}) for k in range(1, n + 1)]
+    lines = dlg.caption_lines(metas, dlg.script_lines(s), starts, lengths)
+    timed = any((m.get("meta") or {}).get("lines") for m in metas)
+    method = "dialogue lines (timing from the render)" if timed else "dialogue lines (estimated)"
+    words = [Word(x["text"], x["start"], x["end"]) for x in lines]
+    ctx.write_json("final/words.json", {"method": method, "words": words_json(words),
+                                        "lines": [{k: x[k] for k in ("i", "speaker", "text", "start", "end")} for x in lines]})
+    ctx.write_text("final/final.srt", to_srt(words, words_per_cue=1))
+    ass, violations = cap.build_line_ass(lines, p["ratio"], w, h, captions=bool(ctx.settings["captions"].get("enabled", True)))
+    for v in violations:
+        ctx.log("safe zone: " + v, "warn")
+    ass_path = ctx.write_text("final/captions.ass", ass)
+    captioned = ctx.path("final/captioned.mp4")
+    await th(st.burn_ass, stitched, ass_path, captioned)
+    ctx.progress(0.6, "line captions burned in")
+    dcfg = ctx.settings.get("dialogue", {})
+    bed = str(dcfg.get("bed", "room"))
+    mixed = captioned
+    if bed != "none":
+        mixed = ctx.path("final/bedded.mp4")
+        try:
+            await th(st.add_bed, captioned, mixed, bed, float(dcfg.get("bed_db", -30)))
+            ctx.log(f"sound bed: {'room tone' if bed == 'room' else Path(bed).name} at {dcfg.get('bed_db', -30)} dB, dips under the voices")
+        except Exception as e:
+            mixed = captioned
+            ctx.log(f"sound bed skipped ({type(e).__name__}: {str(e)[:160]})", "warn")
+    ctx.progress(0.7, "sound bed")
+    loud = ctx.settings["loudness"]
+    report = await th(st.loudnorm, mixed, ctx.path("final/final.mp4"), loud["integrated_lufs"], loud["true_peak_db"])
+    info = probe(ctx.path("final/final.mp4"))
+    from ..render.media import run_ffmpeg
+    await th(run_ffmpeg, ["-ss", "1.2", "-i", str(ctx.path("final/final.mp4")), "-frames:v", "1", str(ctx.path("final/poster.png"))])
+    ctx.write_json("final/loudness.json", {**report, **info, "caption_timing": method, "safe_zone_violations": violations})
+    ctx.progress(0.9, "quality checks")
+    await _final_qa(ctx, n, starts, [(x["start"], x["end"], k, 0) for k, x in enumerate(lines)])
+    loud_txt = (f"{report['after_i']:.1f} LUFS (target {report['target_i']})" if report.get("after_i") is not None
+                else "audio is silent, loudness not normalised")
+    ctx.log(f"final.mp4: {info['duration']:.1f}s {info['width']}x{info['height']}, {loud_txt}, {len(lines)} dialogue lines, "
+            f"captions: {method}")
+    return {"outputs": ["final/final.mp4", "final/poster.png", "final/final.srt", "final/captions.ass", "final/words.json",
+                        "final/loudness.json", "final/qa.json"]}
+
+
 @stage("stitch", "Stitch, captions, loudness", description="ffmpeg concat, word-timed captions, hook card, -16 LUFS.")
 async def stitch_stage(ctx) -> dict:
     p = ctx.project_data()
@@ -435,6 +547,9 @@ async def stitch_stage(ctx) -> dict:
     starts = [sum(lengths[:k]) for k in range(len(lengths))]
     backend_used = ctx.read_json("clips/clip-01.json", default={}).get("backend", "mock")
     words, method = None, "estimate"
+    dialogue_mode = s.get("mode") == "dialogue"
+    if dialogue_mode:
+        return await _stitch_dialogue(ctx, p, s, n, stitched, starts, lengths, w, h)
     if backend_used != "mock":
         cs = ctx.settings["captions"]
         if cs.get("engine") == "groq":
@@ -473,15 +588,7 @@ async def stitch_stage(ctx) -> dict:
     # quality report on the exported file (frames, A/V length, unexpected black dips, caption overlaps)
     ctx.progress(0.9, "quality checks")
     events = cap.page_events(cap.phrase_pages(cap.dedupe_words(words), int(ctx.settings["captions"].get("words_per_page", 3))))
-    qa = await th(st.final_qa, ctx.path("final/final.mp4"), 24.0, starts, events)
-    clip_qa = {k: ctx.read_json(f"clips/clip-{k:02d}.json", default={}).get("meta", {}).get("qa") for k in range(1, n + 1)}
-    qa["clips"] = {k: v for k, v in clip_qa.items() if v}
-    ctx.write_json("final/qa.json", qa)
-    for prob in qa["problems"]:
-        ctx.log("QA: " + prob, "warn")
-    if not qa["problems"]:
-        ctx.log(f"QA: {qa['frames']} frames, audio and video both {qa['video_seconds']:.2f}s, no unexpected black frames, "
-                "no caption overlaps")
+    await _final_qa(ctx, n, starts, events)
     loud_txt = (f"{report['after_i']:.1f} LUFS (target {report['target_i']})" if report.get("after_i") is not None
                 else "audio is silent, loudness not normalised")
     if report.get("skipped"):

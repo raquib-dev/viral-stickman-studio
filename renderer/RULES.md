@@ -75,6 +75,16 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
 20. **Every render reports on itself.** render.mjs emits a `qa` event per clip (frames rendered vs expected,
     near-black frames no fade explains, mostly-white frames, how often the exposure guard acted); stitch writes
     `final/qa.json` for the whole video (frame count, audio vs video length, black dips, caption overlaps).
+21. **Three kinds of character, one motion system.** `kind`: `stickman` (default), `chibi` (a stylised person:
+    big faceted head with a shaped face, `appearance` for hair, glasses, headphones, clothes colours and a
+    `variant` that nudges the face slightly) and `mascot` (a lobed body with rectangle eyes; it talks by
+    squashing and bobbing, its eyes carry the expression, it hops on `cheer`). Chibi uses the same skeleton,
+    gestures, IK and life layer as the stick figure, scaled to its proportions; `gaze_max` limits head turns.
+22. **Hard cuts.** A camera key with `cut: true` holds the previous shot until its time, then jumps; `push`
+    (0-0.3) drifts in during a held shot. Shots frame each character from its own head height and size, and
+    depth of field focuses on what the shot looks at.
+23. **The `office` set** (style `night`) is a late-night desk: its layout numbers live in `catalog.json` →
+    `sets.office`, shared with the Python dialogue scene builder.
 
 ## Scene plan (version 2)
 

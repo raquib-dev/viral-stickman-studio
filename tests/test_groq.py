@@ -67,6 +67,30 @@ async def test_groq_request_retries_rate_limit_and_falls_back_to_json_mode(key, 
     assert "rate limit; waiting 3s" in text and "billed by Groq" in text and KEY not in text
 
 
+async def test_groq_request_too_large_shrinks_then_explains(key):
+    seen = []
+    big = 'Request too large for model on tokens per minute (TPM): Limit 8000, Requested 14200, please reduce your message size'
+
+    def handler(req: httpx.Request):
+        body = json.loads(req.content)
+        seen.append(body)
+        if len(seen) <= 2:                  # too large twice, then it fits
+            return httpx.Response(413, json={"error": {"message": big, "type": "tokens"}})
+        return _reply('{"title": "ok"}')
+    ctx = Ctx()
+    task = AgentTask("x", "p", SCHEMA, ["ig-reel"])
+    out = await la.GroqAgent(_settings(), transport=httpx.MockTransport(handler)).run(task, ctx)
+    assert out == {"title": "ok"} and len(seen) == 3
+    # 6200 over: a reply allowance of 8192 - 6456 is too small for a script, so the skill text goes instead and the
+    # reply allowance is what the limit leaves after the smaller prompt
+    assert seen[0]["max_tokens"] == 8192 and la.MIN_REPLY_TOKENS <= seen[1]["max_tokens"] < 8000 - 256
+    assert "SKILL `ig-reel`" in seen[0]["messages"][0]["content"] and "SKILL `ig-reel`" not in seen[1]["messages"][0]["content"]
+    assert sum(1 for lv, _ in ctx.lines if lv == "warn") == 2
+    always = httpx.MockTransport(lambda req: httpx.Response(413, json={"error": {"message": big}}))
+    with pytest.raises(AgentError, match="limit is 8000 tokens per minute, this request needs 14200"):
+        await la.GroqAgent(_settings(), transport=always).run(task, Ctx())
+
+
 async def test_groq_bad_key_and_missing_key_are_clear(key, monkeypatch):
     t = httpx.MockTransport(lambda req: httpx.Response(401, json={"error": {"message": "Invalid API Key"}}))
     with pytest.raises(AgentError, match="API key was refused"):

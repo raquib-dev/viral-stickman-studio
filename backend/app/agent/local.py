@@ -53,7 +53,7 @@ def extract_json(text: str) -> Any:
 def build_messages(task: AgentTask, cfg: dict) -> list[dict]:
     parts = [SYSTEM_APPEND, "You cannot run tools or read files: everything you need is below. "
              "Reply with ONE JSON value that matches the schema, and nothing else."]
-    for s in task.skills:
+    for s in task.skills if int(cfg.get("skill_chars", 14000)) > 0 else []:      # 0: no skill text at all
         body = skill_text(s, int(cfg.get("skill_chars", 14000)))
         if body:
             parts.append(f"=== SKILL `{s}` (follow it) ===\n{body}")
@@ -126,6 +126,7 @@ class LocalAgent:
     async def run(self, task: AgentTask, ctx) -> dict:
         attempts = int(self.settings["agent"].get("max_attempts", 3))
         messages = build_messages(task, self.cfg)
+        max_out = int(self.cfg.get("max_tokens", 8192))
         fmt: dict | None = {"type": "json_schema", "json_schema": {"name": task.name, "schema": task.schema}}
         last: Exception | None = None
         async with self._client() as http:
@@ -157,7 +158,7 @@ class LocalAgent:
                                                                 "corrected JSON that matches the schema exactly."}]
                         continue
                 body = {"model": self.cfg["model"], "messages": messages, "temperature": float(self.cfg.get("temperature", 0.4)),
-                        "max_tokens": int(self.cfg.get("max_tokens", 8192)), "stream": False}
+                        "max_tokens": max_out, "stream": False}
                 if fmt:
                     body["response_format"] = fmt
                 t0 = time.time()
@@ -183,9 +184,32 @@ class LocalAgent:
                     raise AgentError(f"{self.label} HTTP {r.status_code}: the API key was refused ({r.text[:200]})")
                 if r.status_code == 404:
                     raise AgentError(self._not_found())
+                shrinks = 0
+                while r.status_code == 413 and shrinks < 2:
+                    # too large for the plan's per-minute token limit (Groq counts the prompt plus the reply it may
+                    # write): first lower the reply allowance to fit, then leave out the skill text
+                    shrinks += 1
+                    lim = _token_limit(r.text)
+                    over = lim[1] - lim[0] if lim else 0
+                    if shrinks == 1 and lim and max_out - over - 256 >= MIN_REPLY_TOKENS:
+                        max_out = max_out - over - 256
+                        ctx.log(f"agent[{task.name}] {self.label}: request too large for the plan's limit ({lim[1]} > {lim[0]} "
+                                f"tokens); retrying with a reply allowance of {max_out} tokens", "warn")
+                    else:
+                        messages = build_messages(task, {**self.cfg, "skill_chars": 0})
+                        if lim:                    # the smaller prompt, estimated generously (3.5 characters a token)
+                            prompt_est = int(sum(len(m["content"]) for m in messages) / 3.5)
+                            max_out = max(MIN_REPLY_TOKENS, min(max_out, lim[0] - prompt_est - 256))
+                        ctx.log(f"agent[{task.name}] {self.label}: still too large; retrying without the skill text "
+                                f"(the task's own rules stay), reply allowance {max_out} tokens", "warn")
+                    body = {**body, "messages": messages, "max_tokens": max_out}
+                    r = await http.post("/chat/completions", json={**body, **({"response_format": fmt} if fmt else {})})
                 if r.status_code == 413:
-                    raise AgentError(f"{self.label} HTTP 413: the prompt is larger than this model/plan allows per request. "
-                                     "Lower Skill text per prompt in Settings → Writing model, or pick a model with a higher limit.")
+                    lim = _token_limit(r.text)
+                    sizes = f" (the limit is {lim[0]} tokens per minute, this request needs {lim[1]})" if lim else ""
+                    raise AgentError(f"{self.label} HTTP 413: the request is larger than this model/plan allows{sizes}. "
+                                     "Lower Max output tokens or Skill text per prompt in Settings → Writing model, or pick a "
+                                     "model with a higher tokens-per-minute limit (console.groq.com/settings/limits).")
                 if r.status_code >= 400:
                     last = AgentError(f"{self.label} HTTP {r.status_code}: {r.text[:300]}")
                     ctx.log(f"agent[{task.name}] {last}", "warn")
@@ -233,6 +257,15 @@ class GroqAgent(LocalAgent):
 
 class _Retry(Exception):
     pass
+
+
+MIN_REPLY_TOKENS = 2500     # the smallest reply allowance a full script (with a reasoning model's thinking) fits in
+
+
+def _token_limit(text: str) -> tuple[int, int] | None:
+    """(limit, requested) from a "request too large" reply ("... Limit 8000, Requested 14215 ..."), if it says."""
+    m = re.search(r"Limit\s+(\d+)\s*,\s*Requested\s+(\d+)", text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def ollama_root(base_url: str) -> str:

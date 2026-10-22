@@ -11,6 +11,8 @@ export const EASE = {
   outCubic: (t) => 1 - Math.pow(1 - t, 3),
   outQuint: (t) => 1 - Math.pow(1 - t, 5),
   outBack: (t) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+  // a gentle overshoot: limbs settle past the target and back, instead of stopping dead like a robot
+  outBackSoft: (t) => { const c1 = 0.9, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
   outElastic: (t) => (t === 0 || t === 1 ? t : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * (2 * Math.PI) / 3) + 1),
 };
 export const ease = (name, t) => (EASE[name] ?? EASE.inOutCubic)(clamp(t));

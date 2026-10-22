@@ -90,7 +90,7 @@ async function load(spec) {
   const gltf = await loadRig(spec.rig ?? "./models/stickman-rig.glb");
   const actors = (spec.actors ?? []).map((a, i) => {
     const s = new Stickman(gltf, { SkeletonUtils, color: a.color ?? `#${pal0.ink.getHexString()}`, seed: (spec.seed ?? 1) + i * 17,
-      material: style.char.material, roughness: style.char.roughness, hat: a.hat, hatColor: a.hat_color });
+      material: style.char.material, roughness: style.char.roughness, hat: a.hat, hatColor: a.hat_color, limbs: a.limbs ?? spec.limbs });
     scene.add(s.group);
     return { spec: a, rig: s, id: a.id ?? `actor${i}` };
   });

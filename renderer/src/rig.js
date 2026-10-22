@@ -6,6 +6,7 @@
 // blinking and a talking mouth.
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { Tube } from "./tube.js";
 import { clamp, ease, hash, lerp, noise1, stepFade } from "./util.js";
 
 export const CLIPS = ["Idle", "Walking", "Running", "Dance", "Death", "Sitting", "Standing", "Jump", "Yes", "No",
@@ -18,9 +19,9 @@ export const EXPRESSIONS = {
   surprised: { browY: 0.14, browTilt: 0.12, browAsym: 0, eye: 1.25, smile: 0, open: 0.75, lookX: 0, lookY: 0 },
   sad: { browY: -0.02, browTilt: 0.5, browAsym: 0, eye: 0.88, smile: -0.85, open: 0, lookX: 0, lookY: -0.2 },
   angry: { browY: -0.06, browTilt: -0.55, browAsym: 0, eye: 0.86, smile: -0.45, open: 0.08, lookX: 0, lookY: 0 },
-  confused: { browY: 0.03, browTilt: 0, browAsym: 0.55, eye: 1, smile: -0.2, open: 0, lookX: 0.25, lookY: 0 },
-  thinking: { browY: 0.03, browTilt: 0.2, browAsym: 0.3, eye: 0.94, smile: 0, open: 0, lookX: 0.3, lookY: 0.35 },
-  skeptical: { browY: 0, browTilt: -0.15, browAsym: 0.65, eye: 0.8, smile: -0.1, open: 0, lookX: -0.15, lookY: 0 },
+  confused: { browY: 0.03, browTilt: 0, browAsym: 0.55, eye: 1, smile: -0.2, open: 0, lookX: 0.25, lookY: 0, tilt: 0.16 },
+  thinking: { browY: 0.03, browTilt: 0.2, browAsym: 0.3, eye: 0.94, smile: 0, open: 0, lookX: 0.3, lookY: 0.35, tilt: 0.12 },
+  skeptical: { browY: 0, browTilt: -0.15, browAsym: 0.65, eye: 0.8, smile: -0.1, open: 0, lookX: -0.15, lookY: 0, tilt: -0.1 },
 };
 
 export const GESTURES = ["point", "present", "think", "facepalm", "hips", "crossed", "shrug", "cheer", "hold", "explain"];
@@ -145,6 +146,20 @@ export class Stickman {
     };
     this.joints.footL.scale.set(1, 0.55, 1.7);
     this.joints.footR.scale.set(1, 0.55, 1.7);
+    // bendy limbs (default): one curved tube per limb instead of two cylinders and a joint ball
+    this.bendy = this.opts.limbs !== "rigid";
+    if (this.bendy) {
+      for (const m of Object.values(this.segs)) m.visible = false;
+      for (const k of ["elL", "elR", "knL", "knR", "shL", "shR", "hpL", "hpR"]) this.joints[k].visible = false;
+      this.joints.chest.scale.setScalar(0.85);
+      this.joints.hips.scale.setScalar(0.9);
+      this.tubes = {};
+      for (const k of ["spine", "neck", "armL", "armR", "legL", "legR", "shL", "shR", "hpL", "hpR"]) {
+        const t = new Tube(mat, 6, k.startsWith("arm") || k.startsWith("leg") ? 14 : 6);
+        this.group.add(t.mesh);
+        this.tubes[k] = t;
+      }
+    }
 
     // head: faceted icosphere + face parts in a group that follows the Head bone
     this.head = new THREE.Group();
@@ -204,9 +219,10 @@ export class Stickman {
   }
 
   /** Two-bone IK: elbow position for a shoulder S reaching target T, bending toward `pole`. */
-  static ik(S, T, a, b, pole) {
+  static ik(S, T, a, b, pole, maxReach = 0.965) {
+    // maxReach < 1: a relaxed limb never locks fully straight
     const d = T.clone().sub(S);
-    const dist = Math.min(d.length(), (a + b) * 0.999), dir = d.normalize();
+    const dist = Math.min(d.length(), (a + b) * maxReach), dir = d.normalize();
     const cosA = clamp((a * a + dist * dist - b * b) / (2 * a * dist), -1, 1);
     const perp = pole.clone().addScaledVector(dir, -pole.dot(dir));
     if (perp.lengthSq() < 1e-6) perp.set(0, -1, 0);
@@ -277,28 +293,41 @@ export class Stickman {
       gait.setEffectiveWeight(gait.getEffectiveWeight() + mv);
     }
     this.mixer.update(0);
+    return this.actions.Idle.getEffectiveWeight();
+  }
+
+  /** Speech energy 0..1 at time t: the voice's loudness when supplied, else syllables in the talk windows. */
+  _speak(talk, mouth, t) {
+    if (mouth?.values?.length) {
+      const i = Math.floor(t * (mouth.fps ?? 24));
+      return clamp(mouth.values[Math.min(mouth.values.length - 1, Math.max(0, i))] ?? 0);
+    }
+    for (const [a, b] of talk ?? []) {
+      if (t >= a && t <= b) {
+        const edge = clamp((t - a) / 0.12) * clamp((b - t) / 0.12);
+        const syl = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 * 4.1 + noise1(t * 3, this.opts.seed) * 2.5);
+        return edge * (0.25 + 0.75 * syl * (0.6 + 0.4 * (noise1(t * 1.3, this.opts.seed + 5) * 0.5 + 0.5)));
+      }
+    }
+    return 0;
+  }
+
+  /** Speech emphasis: the speech energy averaged over the last ~0.3 s (slow enough to drive arms and nods). */
+  _emphasis(actor, t) {
+    let sum = 0;
+    for (let k = 0; k < 6; k++) sum += this._speak(actor.talk, actor.mouth, t - k * 0.05);
+    return sum / 6;
   }
 
   _expression(face, talk, t, mouth) {
     const keys = face?.length ? face : [{ t: 0, expr: "neutral" }];
     const [prev, cur, w] = stepFade(keys, t, 0.25);
     const A = EXPRESSIONS[prev.expr] ?? EXPRESSIONS.neutral, B = EXPRESSIONS[cur.expr] ?? EXPRESSIONS.neutral;
-    const e = Object.fromEntries(Object.keys(A).map((k) => [k, lerp(A[k], B[k], w)]));
+    const names = new Set([...Object.keys(A), ...Object.keys(B)]);
+    const e = Object.fromEntries([...names].map((k) => [k, lerp(A[k] ?? 0, B[k] ?? 0, w)]));
     // talking: the voiceover's loudness per frame when the app supplies it (real lip sync), otherwise
     // syllable-like motion inside the talk windows
-    let speak = 0;
-    if (mouth?.values?.length) {
-      const i = Math.floor(t * (mouth.fps ?? 24));
-      speak = clamp(mouth.values[Math.min(mouth.values.length - 1, Math.max(0, i))] ?? 0);
-      talk = [];
-    }
-    for (const [a, b] of talk ?? []) {
-      if (t >= a && t <= b) {
-        const edge = clamp((t - a) / 0.12) * clamp((b - t) / 0.12);
-        const syl = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 * 4.1 + noise1(t * 3, this.opts.seed) * 2.5);
-        speak = edge * (0.25 + 0.75 * syl * (0.6 + 0.4 * (noise1(t * 1.3, this.opts.seed + 5) * 0.5 + 0.5)));
-      }
-    }
+    const speak = this._speak(talk, mouth, t);
     // blink
     let blink = 1;
     for (const bt of this.blinks) {
@@ -308,69 +337,161 @@ export class Stickman {
     return { ...e, open: clamp(e.open + speak * 0.62), blink };
   }
 
-  update(actor, t, ctx = {}) {
-    this._animate(actor.anim, t, ctx.speed ?? 0, ctx.dist ?? 0);
+  /**
+   * The whole skeleton at time t as points in actor space: the rig's animation, then gestures (IK), then
+   * the "life" layer that keeps the figure from moving like a robot: breathing, weight shift on planted
+   * feet with soft knees, relaxed hanging arms, beat gestures that follow the voice. Pure in t.
+   */
+  _pose(actor, t, ctx) {
+    const idleW = this._animate(actor.anim, t, ctx.speed ?? 0, ctx.dist ?? 0) * (1 - clamp((ctx.speed ?? 0) / 0.35));
     this.group.updateMatrixWorld(true);
+    const seed = this.opts.seed;
     const raw = this._p("Hips");
-    const hips = new THREE.Vector3(raw.x, raw.y * this.hipScale, raw.z);
-    const chest = hips.clone().addScaledVector(this._dir("Hips", "Neck"), LEN.spine);
+    const animHips = new THREE.Vector3(raw.x, raw.y * this.hipScale, raw.z);
+    const spineDir = this._dir("Hips", "Neck");
     const up = this._dir("Neck", "Head");
-    const neckTop = chest.clone().addScaledVector(up, LEN.neck);
-    const headC = neckTop.clone().addScaledVector(up, HEAD_R * 0.92);
-    let [shL, elL, wrL] = this._armChain(chest, "L"), [shR, elR, wrR] = this._armChain(chest, "R");
-    // gestures: reach the hands to body points or targets with two-bone IK, faded over the animation
-    const landmarks = { chest, headC, hips };
+    // legs as the animation has them: the ankles are where the feet are planted
+    const animLegs = { L: this._legChain(animHips, "L"), R: this._legChain(animHips, "R") };
+    // weight shift + breathing (strongest when standing idle)
+    const sway = noise1(t * 0.17, seed) * 0.032 * idleW;
+    const breath = Math.sin(t * Math.PI * 2 * 0.27 + seed);
+    const hips = animHips.clone().add(new THREE.Vector3(sway, -(0.014 + Math.abs(sway) * 0.3) * idleW, 0));
+    const lean = spineDir.clone().add(new THREE.Vector3(-sway * 0.6, 0, 0.02 * idleW)).normalize();
+    const chest = hips.clone().addScaledVector(lean, LEN.spine).addScaledVector(up, 0.006 * breath);
+    // legs: IK from the (shifted) hips to the planted ankles, knees bending the way the animation bends them
+    const legs = {};
+    for (const sd of ["L", "R"]) {
+      const [, k0, an] = animLegs[sd];
+      const hp = hips.clone().addScaledVector(this._dir("Hips", `UpperLeg.${sd}`), LEN.hip);
+      // knees bend forward (the way the body faces), following the animation's bend only in depth
+      const bend = k0.clone().sub(an.clone().add(animLegs[sd][0]).multiplyScalar(0.5));
+      const pole = new THREE.Vector3(bend.x * 0.15, 0, Math.max(0.05, bend.z + 0.05));
+      const [kn, ank] = Stickman.ik(hp, an, LEN.upperLeg, LEN.lowerLeg, pole, 0.985);
+      legs[sd] = [hp, kn, ank];
+    }
+    // arms: animation, then a relaxed hang when idle, beats that follow the voice, then gestures
+    const em = this._emphasis(actor, t);
+    const talking = clamp(em * 2.2);
+    const arms = {};
+    const busy = { L: 0, R: 0 };
+    const landmarks = { chest, headC: chest.clone().addScaledVector(up, LEN.neck + HEAD_R * 0.92), hips };
     for (const g of actor.gestures ?? []) {
-      const dur = g.dur ?? 1.8, fade = 0.3;
-      const wt = clamp((t - g.t) / fade) * clamp((g.t + dur - t) / fade);
-      if (wt <= 0) continue;
+      const dur = g.dur ?? 1.8;
+      if (t < g.t - 0.05 || t > g.t + dur + 0.4) continue;
       const tgt = g.target && ctx.resolve ? ctx.resolve(g.target, this.group) : null;
-      const sides = g.side === "both" || ["hips", "crossed", "shrug", "cheer"].includes(g.gesture) && !g.side ? ["L", "R"]
-        : [g.side ?? (tgt ? (tgt.x >= 0 ? "L" : "R") : "R")];
-      for (const sd of sides) {
+      for (const sd of this._sides(g, tgt)) busy[sd] = Math.max(busy[sd], clamp((t - g.t) / 0.4) * clamp((g.t + dur + 0.4 - t) / 0.4));
+    }
+    for (const sd of ["L", "R"]) {
+      const sg = sd === "L" ? 1 : -1;
+      let [sh, el, wr] = this._armChain(chest, sd);
+      sh.addScaledVector(up, 0.004 * breath);
+      const free = 1 - busy[sd];
+      // relaxed hang: hands slightly forward and out, elbows soft, a slow swing
+      const hangW = idleW * 0.65 * free;
+      if (hangW > 0.01) {
+        const swing = noise1(t * 0.35 + (sg > 0 ? 0 : 9), seed) * 0.03;
+        const T = sh.clone().add(new THREE.Vector3(sg * 0.06, -0.55, 0.05 + swing));
+        const [E, H] = Stickman.ik(sh, T, LEN.upperArm, LEN.lowerArm, new THREE.Vector3(sg * 0.12, 0, -1));
+        el = el.lerp(E, hangW); wr = wr.lerp(H, hangW);
+      }
+      // talking beats: the hands lift and settle with the stress of the speech (right hand leads)
+      const beatW = talking * free * (sd === "R" ? 0.55 : 0.35);
+      if (beatW > 0.01) {
+        const lift = this._emphasis(actor, t - (sd === "R" ? 0 : 0.12));
+        const T = chest.clone().add(new THREE.Vector3(sg * 0.24, -0.33 + 0.16 * lift, 0.22 + 0.05 * lift));
+        const [E, H] = Stickman.ik(sh, T, LEN.upperArm, LEN.lowerArm, new THREE.Vector3(sg, -1, -0.3));
+        el = el.lerp(E, beatW); wr = wr.lerp(H, beatW);
+      }
+      arms[sd] = [sh, el, wr];
+    }
+    for (const g of actor.gestures ?? []) {
+      const dur = g.dur ?? 1.8;
+      const kin = clamp((t - g.t) / 0.42), kout = clamp((g.t + dur - t) / 0.4);
+      if (kin <= 0 || kout <= 0) continue;
+      const k = ease("outBackSoft", kin) * ease("inOutSine", kout);
+      const tgt = g.target && ctx.resolve ? ctx.resolve(g.target, this.group) : null;
+      for (const sd of this._sides(g, tgt)) {
         const sg = sd === "L" ? 1 : -1;
-        const sh = sd === "L" ? shL : shR;
+        const [sh, el, wr] = arms[sd];
         const [T, pole] = this._gestureTarget(g, sg, { ...landmarks, sh }, t, tgt);
         const [E, H] = Stickman.ik(sh, T, LEN.upperArm, LEN.lowerArm, pole);
-        const k = ease("inOutSine", wt);
-        if (sd === "L") { elL = elL.clone().lerp(E, k); wrL = elL.clone().addScaledVector(wrL.clone().lerp(H, k).sub(elL).normalize(), LEN.lowerArm); }
-        else { elR = elR.clone().lerp(E, k); wrR = elR.clone().addScaledVector(wrR.clone().lerp(H, k).sub(elR).normalize(), LEN.lowerArm); }
+        arms[sd] = [sh, el.clone().lerp(E, k), wr.clone().lerp(H, k)];
       }
     }
-    this.hands = { L: wrL, R: wrR };
-    const [hpL, knL, anL] = this._legChain(hips, "L"), [hpR, knR, anR] = this._legChain(hips, "R");
-    const seg = (m, a, b) => {
-      const d = b.clone().sub(a), len = d.length();
-      m.position.copy(a).addScaledVector(d, 0.5);
-      m.scale.set(1, Math.max(1e-4, len), 1);
-      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
-    };
-    const S = this.segs, J = this.joints;
-    seg(S.spine, hips, chest); seg(S.neck, chest, neckTop.clone().addScaledVector(up, HEAD_R * 0.3));
-    seg(S.uaL, shL, elL); seg(S.laL, elL, wrL); seg(S.uaR, shR, elR); seg(S.laR, elR, wrR);
-    seg(S.ulL, hpL, knL); seg(S.llL, knL, anL); seg(S.ulR, hpR, knR); seg(S.llR, knR, anR);
-    seg(S.shL, chest, shL); seg(S.shR, chest, shR); seg(S.hpL, hips, hpL); seg(S.hpR, hips, hpR);
+    return { hips, chest, up, lean, legs, arms, breath, em, idleW, sway };
+  }
+
+  _sides(g, tgt) {
+    if (g.side === "both" || (["hips", "crossed", "shrug", "cheer"].includes(g.gesture) && !g.side)) return ["L", "R"];
+    return [g.side ?? (tgt ? (tgt.x >= 0 ? "L" : "R") : "R")];
+  }
+
+  update(actor, t, ctx = {}) {
+    // overlap / follow-through: elbows and hands trail the body a little (the pose a moment ago is mixed in)
+    const back = (dt) => this._pose(actor, Math.max(0, t - dt), { ...ctx, dist: Math.max(0, (ctx.dist ?? 0) - (ctx.speed ?? 0) * dt) });
+    const P2 = back(0.14), P1 = back(0.07);
+    const P = this._pose(actor, t, ctx);
+    const trail = (sd, i, w0, w1, w2) => P.arms[sd][i].clone().multiplyScalar(w0).addScaledVector(P1.arms[sd][i], w1).addScaledVector(P2.arms[sd][i], w2);
+    for (const sd of ["L", "R"]) {
+      const [sh] = P.arms[sd];
+      const elB = trail(sd, 1, 0.72, 0.2, 0.08), wrB = trail(sd, 2, 0.52, 0.3, 0.18);
+      const el = sh.clone().addScaledVector(elB.sub(sh).normalize(), LEN.upperArm);
+      const wr = el.clone().addScaledVector(wrB.sub(el).normalize(), LEN.lowerArm);
+      P.arms[sd] = [sh, el, wr];
+    }
+    const { hips, chest, up, lean, legs, arms } = P;
+    this.hands = { L: arms.L[2], R: arms.R[2] };
+    const neckTop = chest.clone().addScaledVector(up, LEN.neck);
+    const headC = neckTop.clone().addScaledVector(up, HEAD_R * 0.92);
+    const J = this.joints;
+    const fwd = lean.clone().cross(this._dir("UpperLeg.R", "UpperLeg.L")).normalize();
+    if (this.bendy) {
+      const T = this.tubes, mid = (a, b, bend = 0) => a.clone().lerp(b, 0.5).addScaledVector(fwd, bend);
+      T.spine.update(hips, mid(hips, chest, 0.012 + 0.01 * P.breath), chest, SPINE_R * 1.05, SPINE_R * 0.95, fwd);
+      T.neck.update(chest, mid(chest, headC), headC, LIMB_R * 0.95, LIMB_R * 0.85, fwd);
+      for (const sd of ["L", "R"]) {
+        const [sh, el, wr] = arms[sd], [hp, kn, an] = legs[sd];
+        T[`arm${sd}`].update(sh, el, wr, LIMB_R * 1.05, LIMB_R * 0.85, fwd);
+        T[`leg${sd}`].update(hp, kn, an, LIMB_R * 1.15, LIMB_R * 0.9, fwd);
+        T[`sh${sd}`].update(chest, mid(chest, sh), sh, LIMB_R, LIMB_R, fwd);
+        T[`hp${sd}`].update(hips, mid(hips, hp), hp, LIMB_R * 1.1, LIMB_R * 1.1, fwd);
+      }
+    } else {
+      const seg = (m, a, b) => {
+        const d = b.clone().sub(a), len = d.length();
+        m.position.copy(a).addScaledVector(d, 0.5);
+        m.scale.set(1, Math.max(1e-4, len), 1);
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+      };
+      const S = this.segs;
+      seg(S.spine, hips, chest); seg(S.neck, chest, neckTop.clone().addScaledVector(up, HEAD_R * 0.3));
+      seg(S.uaL, arms.L[0], arms.L[1]); seg(S.laL, arms.L[1], arms.L[2]); seg(S.uaR, arms.R[0], arms.R[1]); seg(S.laR, arms.R[1], arms.R[2]);
+      seg(S.ulL, legs.L[0], legs.L[1]); seg(S.llL, legs.L[1], legs.L[2]); seg(S.ulR, legs.R[0], legs.R[1]); seg(S.llR, legs.R[1], legs.R[2]);
+      seg(S.shL, chest, arms.L[0]); seg(S.shR, chest, arms.R[0]); seg(S.hpL, hips, legs.L[0]); seg(S.hpR, hips, legs.R[0]);
+      J.elL.position.copy(arms.L[1]); J.elR.position.copy(arms.R[1]); J.knL.position.copy(legs.L[1]); J.knR.position.copy(legs.R[1]);
+    }
     J.hips.position.copy(hips); J.chest.position.copy(chest);
-    J.shL.position.copy(shL); J.shR.position.copy(shR); J.hpL.position.copy(hpL); J.hpR.position.copy(hpR);
-    J.elL.position.copy(elL); J.elR.position.copy(elR); J.knL.position.copy(knL); J.knR.position.copy(knR);
-    J.handL.position.copy(wrL); J.handR.position.copy(wrR);
-    // feet point the way the hips face
-    const fwd = this._dir("Hips", "Neck").cross(this._dir("UpperLeg.R", "UpperLeg.L")).normalize();
-    for (const [f, an] of [[J.footL, anL], [J.footR, anR]]) {
+    J.shL.position.copy(arms.L[0]); J.shR.position.copy(arms.R[0]); J.hpL.position.copy(legs.L[0]); J.hpR.position.copy(legs.R[0]);
+    J.handL.position.copy(arms.L[2]); J.handR.position.copy(arms.R[2]);
+    for (const [f, an] of [[J.footL, legs.L[2]], [J.footR, legs.R[2]]]) {
       f.position.copy(an).addScaledVector(fwd, 0.035).add(new THREE.Vector3(0, -0.012, 0));
       f.rotation.set(0, Math.atan2(fwd.x, fwd.z), 0);
     }
-    // head follows the Head bone's rotation relative to the rest pose
+    // head: the rig's head rotation, then look-at, then life (nods with the speech, small glances, a tilt)
     const hq = new THREE.Quaternion();
     this._bone("Head").getWorldQuaternion(hq);
     const local = this.group.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(hq);
     this.head.quaternion.copy(local.multiply(this.headBindInv));
     this.head.position.copy(headC);
-    // look-at: turn the head (yaw/pitch, limited like a neck) toward the camera, a prop, another actor
     const lk = this._look(actor.look, t, ctx, headC);
     if (lk) this.head.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(lk.pitch, lk.yaw, 0, "YXZ")));
+    const seed = this.opts.seed;
+    const e = this._expression(actor.face, actor.talk, t, actor.mouth);
+    const nod = 0.09 * (this._emphasis(actor, t) - this._emphasis(actor, t - 0.25));
+    const glance = noise1(t * 0.31, seed + 2) * 0.07, tilt = noise1(t * 0.23, seed + 3) * 0.045 + (e.tilt ?? 0);
+    this.head.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(nod + 0.015 * P.breath, glance, tilt - P.sway * 1.2, "YXZ")));
     if (ctx.ink && !actor.color) this.mat.color.copy(ctx.ink);
-    this._face(this._expression(actor.face, actor.talk, t, actor.mouth));
+    this._face(e);
   }
 
   _look(track, t, ctx, headC) {

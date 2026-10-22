@@ -38,6 +38,12 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
    The vendored skills are not edited.
 10. **Reviewed in phases.** The look (Phase 1) is approved before the motion library, the AI scene
     planner and the asset generator are built on top of it.
+13. **Natural, not robotic.** The rig's clips are only the base. On top, every character gets: bendy limbs
+    (two straight parts joined by a rounded bend, never locked straight), overlap (hands and forearms trail
+    the body by ~0.1 s), breathing, a weight shift on planted feet with soft knees, relaxed hanging arms when
+    idle, beat gestures and head nods that follow the voice, small glances, and gestures that ease in with a
+    gentle overshoot. All of it is computed from time, so rule 2 still holds. `"limbs": "rigid"` on an actor
+    (or the scene) brings back straight segments.
 
 ## Scene plan (version 2)
 
@@ -55,7 +61,7 @@ These rules keep the renderer reliable, repeatable and safe. Every change to `re
     "look": [{ "t": 0, "at": "camera" }, { "t": 3, "at": "other" }],      // camera | actor id | prop id | left/right/up/down | [x,y,z]
     "face": [{ "t": 0, "expr": "surprised" }],
     "talk": [[0.4, 6.0]],                                              // or "mouth": {fps, values[]} from the voice
-    "hat": "crown", "color": "#f1ece4"
+    "hat": "crown", "color": "#f1ece4", "limbs": "bendy"                 // bendy (default) | rigid
   }],
   "props": [{ "id": "p1", "type": "coins", "pos": [0.55, 0, 0.15], "t_in": 1.0, "enter": "drop", "idle": "bob" },
             { "type": "mug", "hold": { "actor": "hero", "hand": "R", "t": 0.6 } }],

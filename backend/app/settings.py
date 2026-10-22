@@ -85,8 +85,9 @@ DEFAULTS: dict[str, Any] = {
     "script_gaps": "ask",
     # dialogue shorts (project format "dialogue"): bed = "room" (generated room tone), "none", or a path to your own
     # audio file; bed_db = its level under the voices; mascot_pitch raises the mascot's voice (1.0 = as the engine
-    # speaks it); dof = depth-of-field strength of the close-ups
-    "dialogue": {"bed": "room", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.035},
+    # speaks it); dof = depth-of-field strength of the close-ups; motion "still" = the characters keep still and only
+    # their faces move (expressions, blinks, lip sync), "lively" = nods, hand beats, gestures, the mascot hops
+    "dialogue": {"bed": "room", "bed_db": -30.0, "mascot_pitch": 1.0, "dof": 0.035, "motion": "still"},
     "agent": {
         # claude: Claude Agent SDK for every task. local: an OpenAI-compatible server on this machine
         # (Ollama, LM Studio, llama.cpp). hybrid: Claude for direction, local for research and labeling.
@@ -172,6 +173,8 @@ def validate_settings(s: dict[str, Any]) -> None:
     d = s.get("dialogue") or {}
     if not -60 <= float(d.get("bed_db", -30)) <= -6:
         raise ValueError("dialogue bed level must be between -60 and -6 dB")
+    if d.get("motion", "still") not in ("still", "lively"):
+        raise ValueError("dialogue motion must be still or lively")
     if not 0.7 <= float(d.get("mascot_pitch", 1.0)) <= 1.5:
         raise ValueError("mascot pitch must be between 0.7 and 1.5")
     if s.get("script_gaps", "ask") not in ("ask", "rewrite"):

@@ -317,21 +317,26 @@ WIDE = [{"pos": [0.4, 1.25, 1.8], "look": [0.1, 0.96, -0.25], "fov": 38},
 
 
 def build_scene(plan: list[dict], timing: dict, cast: dict, mouths: dict, fps: int, width: int, height: int,
-                duration: float, seed: int, quality: str, theme: str = "dark", dof: float = 0.035) -> dict:
-    """A version 2 scene for one clip: the person behind the desk, the mascot on it, a hard cut per line."""
+                duration: float, seed: int, quality: str, theme: str = "dark", dof: float = 0.035, motion: str = "still") -> dict:
+    """A version 2 scene for one clip: the person behind the desk, the mascot on it, a hard cut per line.
+    motion "still" (default): the characters do not move; only faces change (expressions, blinks, lip sync).
+    motion "lively": nods, hand beats, a hand to the cheek on questions, the mascot hops and turns."""
+    still = motion != "lively"
+    idle = {"t": 0, "clip": "Idle", "speed": 0} if still else {"t": 0, "clip": "Idle"}
     starts, ends = timing["starts"], timing["ends"]
     a, b = cast["a"], cast["b"]
     actor = {
-        "a": {"id": "a", "kind": a["kind"], "appearance": a.get("appearance", {}), "position": OFFICE["person"],
-              "anim": [{"t": 0, "clip": "Idle"}], "face": [{"t": 0, "expr": "neutral"}], "gaze_max": 0.45,
-              "gestures": [{"t": 0, "gesture": "rest", "side": "both", "dur": duration + 1}], "look": [{"t": 0, "at": "b"}]},
+        # hands rest on the desk from before the clip starts (t -1), so they never reach in at a clip's first frame
+        "a": {"id": "a", "kind": a["kind"], "appearance": a.get("appearance", {}), "position": OFFICE["person"], "still": still,
+              "anim": [idle], "face": [{"t": 0, "expr": "neutral"}], "gaze_max": 0.45,
+              "gestures": [{"t": -1, "gesture": "rest", "side": "both", "dur": duration + 2}], "look": [{"t": 0, "at": "b"}]},
         "b": {"id": "b", "kind": b["kind"], "appearance": b.get("appearance", {}), "position": OFFICE["mascot"], "facing": -0.2,
-              "face": [{"t": 0, "expr": "neutral"}], "gestures": [], "look": [{"t": 0, "at": "camera"}]},
+              "still": still, "face": [{"t": 0, "expr": "neutral"}], "gestures": [], "look": [{"t": 0, "at": "camera"}]},
     }
     if b["kind"] != "mascot":                       # a second person stands beside the desk instead
         actor["b"]["position"] = [-0.85, 0, -0.3]       # the free side of the desk (the monitor is on the right)
         actor["b"]["facing"] = 0.5
-        actor["b"]["anim"] = [{"t": 0, "clip": "Idle"}]
+        actor["b"]["anim"] = [idle]
     cams = []
     for p, t0, t1 in zip(plan, starts, ends):
         s, other = p["speaker"], ("b" if p["speaker"] == "a" else "a")
@@ -344,14 +349,16 @@ def build_scene(plan: list[dict], timing: dict, cast: dict, mouths: dict, fps: i
         cams.append(key)
         actor[s]["face"].append({"t": round(max(0.0, t0 - 0.1), 3), "expr": p["face"]})
         actor[s]["face"].append({"t": round(t1 + 0.35, 3), "expr": "neutral"})
-        if p.get("gesture"):
+        if p.get("gesture") and not still:
             g = {"t": round(t0, 3), "gesture": p["gesture"], "dur": round(max(0.8, t1 - t0 + 0.4), 3)}
             if p["gesture"] == "think":
                 g["side"] = "R"
             actor[s]["gestures"].append(g)
         # gaze: the person watches the mascot; the mascot turns to her while she talks and is back facing the
         # camera before its own close-up cuts in (so the turn never happens on screen)
-        if s == "a" and b["kind"] == "mascot":
+        if still:
+            pass                                          # gaze stays put: she watches the mascot, it faces the camera
+        elif s == "a" and b["kind"] == "mascot":
             actor["b"]["look"].append({"t": round(t0 + 0.2, 3), "at": "a"})
         else:
             actor["b"]["look"].append({"t": round(max(0.0, cut_at - 0.45), 3), "at": "camera"})

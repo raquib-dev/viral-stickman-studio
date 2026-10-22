@@ -151,6 +151,8 @@ export default function Settings() {
             <datalist id="bed-opts"><option value="room" /><option value="none" /></datalist></label>
           <label className="text-sm">Bed level (dB under the voices)<input className="input" type="number" min={-60} max={-6} step={1} value={s.dialogue.bed_db} onChange={(e) => set(["dialogue", "bed_db"], Number(e.target.value))} /></label>
           <label className="text-sm">Mascot pitch (1.0 = as spoken)<input className="input" type="number" min={0.7} max={1.5} step={0.02} value={s.dialogue.mascot_pitch} onChange={(e) => set(["dialogue", "mascot_pitch"], Number(e.target.value))} /></label>
+          <label className="text-sm">Character motion<select className="input" value={s.dialogue.motion ?? "still"} onChange={(e) => set(["dialogue", "motion"], e.target.value)} data-testid="dialogue-motion">
+            <option value="still">Still: only faces move (expressions, lip sync)</option><option value="lively">Lively: nods, hand beats, gestures, hops</option></select></label>
           <label className="text-sm">Close-up background blur<input className="input" type="number" min={0} max={0.08} step={0.005} value={s.dialogue.dof} onChange={(e) => set(["dialogue", "dof"], Number(e.target.value))} /></label>
           <p className="text-xs text-ink-3 md:col-span-4">Mascot voice per engine: Kokoro above; ElevenLabs/Groq use their "mascot" voice when set, else the male voice. The bed dips while anyone speaks.</p>
         </div>

@@ -355,7 +355,7 @@ export class Stickman {
   _buildChibi() {
     const ap = { skin: "#f1c7a5", hair: "#2b1d16", hair_style: "long", top: "#f2b31b", shirt: "#1d1d22", bottom: "#2c3140",
       shoes: "#2a2a2e", glasses: "round", headphones: true, headphones_color: "#d9d9de", variant: 0, ...(this.opts.appearance ?? {}) };
-    const f0 = { width: 1.0, height: 0.96, depth: 0.92, jaw: 0.22, eye_spacing: 0.34, eye_y: -0.02, eye_size: 1.0, mouth_y: -0.42,
+    const f0 = { width: 1.0, height: 0.96, depth: 0.92, jaw: 0.22, eye_spacing: 0.34, eye_y: -0.02, eye_size: 1.0, mouth_y: -0.36,
       ...(ap.face ?? {}) };
     // slight, repeatable face variation per variant number (the same person, a little different)
     const jitter = (k, amt) => (ap.variant ? (hash(k, ap.variant) - 0.5) * 2 * amt : 0);
@@ -447,10 +447,11 @@ export class Stickman {
       return b;
     });
     const arc = Math.PI * 0.6;
-    this.mouthSmile = new THREE.Mesh(new THREE.TorusGeometry(r * 0.075, r * 0.016, 4, 12, arc), M.dark);
+    this.mouthSmile = new THREE.Mesh(new THREE.TorusGeometry(r * 0.09, r * 0.018, 4, 12, arc), M.dark);
     this.mouthSmile.userData.arc = arc;
-    this.mouthOpen = new THREE.Mesh(new THREE.SphereGeometry(r * 0.065, 12, 8), new THREE.MeshStandardMaterial({ color: "#5a2420", roughness: 0.6 }));
+    this.mouthOpen = new THREE.Mesh(new THREE.SphereGeometry(r * 0.115, 12, 8), new THREE.MeshStandardMaterial({ color: "#5a2420", roughness: 0.6 }));
     this.mouthY = r * F.mouth_y;
+    this.mouthLift = r * 0.03;   // the tapered jaw curves away: keep the closed-mouth line on the surface
     this.head.add(this.mouthSmile, this.mouthOpen);
     this._hair(ap, F, M.hair);
     if (ap.glasses && ap.glasses !== "none") this._glasses(ap.glasses, F, M.dark);
@@ -702,9 +703,11 @@ export class Stickman {
     const up = this._dir("Neck", "Head");
     // legs as the animation has them: the ankles are where the feet are planted
     const animLegs = { L: this._legChain(animHips, "L"), R: this._legChain(animHips, "R") };
-    // weight shift + breathing (strongest when standing idle)
-    const sway = noise1(t * 0.17, seed) * 0.032 * idleW;
-    const breath = Math.sin(t * Math.PI * 2 * 0.27 + seed);
+    // weight shift + breathing (strongest when standing idle); `still` actors keep the body motionless (only the
+    // face moves: expressions, blinks, the talking mouth)
+    const still = !!actor.still;
+    const sway = still ? 0 : noise1(t * 0.17, seed) * 0.032 * idleW;
+    const breath = still ? 0 : Math.sin(t * Math.PI * 2 * 0.27 + seed);
     const hips = animHips.clone().add(new THREE.Vector3(sway, -(0.014 + Math.abs(sway) * 0.3) * idleW, 0));
     const lean = spineDir.clone().add(new THREE.Vector3(-sway * 0.6, 0, 0.02 * idleW)).normalize();
     const chest = hips.clone().addScaledVector(lean, this.P.len.spine).addScaledVector(up, 0.006 * breath);
@@ -741,13 +744,13 @@ export class Stickman {
       const out = wr.clone().sub(sh).normalize().angleTo(new THREE.Vector3(0, -1, 0));
       const hangW = idleW * (0.65 + 0.25 * clamp((out - 0.45) / 0.5)) * free;
       if (hangW > 0.01) {
-        const swing = noise1(t * 0.35 + (sg > 0 ? 0 : 9), seed) * 0.03;
+        const swing = still ? 0 : noise1(t * 0.35 + (sg > 0 ? 0 : 9), seed) * 0.03;
         const T = sh.clone().add(new THREE.Vector3(sg * 0.06, -0.55, 0.05 + swing).multiplyScalar(this.P.k));
         const [E, H] = Stickman.ik(sh, T, this.P.len.upperArm, this.P.len.lowerArm, new THREE.Vector3(sg * 0.12, 0, -1));
         el = el.lerp(E, hangW); wr = wr.lerp(H, hangW);
       }
       // talking beats: the hands lift and settle with the stress of the speech (right hand leads)
-      const beatW = talking * free * (sd === "R" ? 0.55 : 0.35);
+      const beatW = still ? 0 : talking * free * (sd === "R" ? 0.55 : 0.35);
       if (beatW > 0.01) {
         const lift = this._emphasis(actor, t - (sd === "R" ? 0 : 0.12));
         const T = chest.clone().add(new THREE.Vector3(sg * 0.24, -0.33 + 0.16 * lift, 0.22 + 0.05 * lift).multiplyScalar(this.P.k));
@@ -837,8 +840,9 @@ export class Stickman {
     if (lk) this.head.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(lk.pitch, lk.yaw, 0, "YXZ")));
     const seed = this.opts.seed;
     const e = this._expression(actor.face, actor.talk, t, actor.mouth);
-    const nod = 0.09 * (this._emphasis(actor, t) - this._emphasis(actor, t - 0.25));
-    const glance = noise1(t * 0.31, seed + 2) * 0.07, tilt = noise1(t * 0.23, seed + 3) * 0.045 + (e.tilt ?? 0);
+    const calm = actor.still ? 0 : 1;
+    const nod = calm * 0.09 * (this._emphasis(actor, t) - this._emphasis(actor, t - 0.25));
+    const glance = calm * noise1(t * 0.31, seed + 2) * 0.07, tilt = calm * noise1(t * 0.23, seed + 3) * 0.045 + (e.tilt ?? 0);
     this.head.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(nod + 0.015 * P.breath, glance, tilt - P.sway * 1.2, "YXZ")));
     if (ctx.ink && !actor.color && !this.fixedColors) this.mat.color.copy(ctx.ink);
     this._face(e);
@@ -882,7 +886,7 @@ export class Stickman {
     this.mouthSmile.visible = e.open < 0.32 && Math.abs(e.smile) > 0.05;
     this.mouthSmile.rotation.set(-0.3, 0, smiling ? -Math.PI / 2 - arc / 2 : Math.PI / 2 - arc / 2);
     this.mouthSmile.scale.set(1, 0.35 + 0.65 * Math.abs(e.smile), 1);
-    this.mouthSmile.position.set(0, my + (smiling ? r * 0.1 : -r * 0.06) * Math.abs(e.smile), z);
+    this.mouthSmile.position.set(0, my + (smiling ? r * 0.1 : -r * 0.06) * Math.abs(e.smile), z + (this.mouthLift ?? 0));
     this.mouthOpen.visible = e.open > 0.04 || Math.abs(e.smile) <= 0.05;
     this.mouthOpen.scale.set(0.75 + 0.25 * e.open, Math.max(0.12, e.open), 0.35);
     this.mouthOpen.position.set(0, my, z - r * 0.02);

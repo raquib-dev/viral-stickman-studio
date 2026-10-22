@@ -57,6 +57,9 @@ export class Mascot {
       this.body.add(e);
       return e;
     });
+    // a small mouth under the eyes: a closed line when quiet, opening with the voice (lip sync)
+    this.mouth = new THREE.Mesh(new THREE.BoxGeometry(R * 0.2, R * 0.028, R * 0.06), new THREE.MeshStandardMaterial({ color: "#3a120c", roughness: 0.5 }));
+    this.body.add(this.mouth);
     this.feet = [-1, 1].map((sx) => {
       const f = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 0.3, 1), this.mat);
       f.scale.set(1.05, 0.62, 1.15);
@@ -112,8 +115,10 @@ export class Mascot {
       const k = (t - g.t) / 0.5;
       if (k > 0 && k < 1) hop = Math.max(hop, Math.sin(k * Math.PI));
     }
-    this.body.scale.set(1 - 0.035 * en, 1 + 0.07 * en + 0.012 * idle, 1 - 0.035 * en);
-    this.body.position.y = R * (0.04 * idle + 0.35 * en * en) + hop * R * 0.9;
+    // `still`: the body does not move at all; only the eyes and the mouth do
+    const move = actor.still ? 0 : 1;
+    this.body.scale.set(1 - 0.035 * en * move, 1 + (0.07 * en + 0.012 * idle) * move, 1 - 0.035 * en * move);
+    this.body.position.y = (R * (0.04 * idle + 0.35 * en * en) + hop * R * 0.9) * move;
     // turn toward what it looks at (another actor, the camera), never fully away from the camera
     let yaw = 0;
     const looks = actor.look?.length ? actor.look : null;
@@ -125,7 +130,11 @@ export class Mascot {
       };
       yaw = lerp(ang(pl), ang(cl), ease("inOutSine", lw));
     }
-    this.body.rotation.set(0.04 * en - 0.03 * hop, yaw + noise1(t * 0.3, seed) * 0.05, noise1(t * 0.25, seed + 4) * 0.03);
+    this.body.rotation.set((0.04 * en - 0.03 * hop) * move, (yaw + noise1(t * 0.3, seed) * 0.05) * move, noise1(t * 0.25, seed + 4) * 0.03 * move);
+    // mouth: opens with the voice of this frame (lightly smoothed), wider for a big sound
+    const open = clamp((this._speak(actor, t) + this._speak(actor, t - 1 / 30)) / 2);
+    this.mouth.position.set(0, R * (0.97 + 0.18 * e.y * 0.3), R * 0.8);
+    this.mouth.scale.set(1 + 0.3 * open, 1 + 7 * open, 1);
     // eyes on the front surface
     const eyeY = R * (1.24 + 0.18 * e.y), gap = R * 0.24;
     for (const eye of this.eyes) {

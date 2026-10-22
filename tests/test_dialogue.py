@@ -260,3 +260,21 @@ def test_dialogue_scene_renders_with_cuts(tmp_path):
     qa = next(json.loads(x) for x in r.stdout.splitlines() if '"qa"' in x)
     assert qa["frames"] == qa["expected"] == 24 and qa["black"] == [] and qa["blown"] == []
     assert not any('"page-error"' in x for x in r.stdout.splitlines())
+
+
+def test_still_motion_is_the_default_and_lively_restores_gestures():
+    lines = L(("a", HOOK), ("b", "That's great!"), ("a", "You counted?"), ("b", "Sixty-one times!"))
+    plan = d.plan_shots(lines)
+    timing = d.layout([1.6, 0.9, 1.0, 1.2], [False] * 4)
+    still = d.build_scene(plan, timing, CAST, {}, 24, 720, 1280, 10.0, seed=3, quality="draft")
+    a, b = still["actors"]
+    assert a["still"] and b["still"]
+    assert a["anim"] == [{"t": 0, "clip": "Idle", "speed": 0}]                  # the idle pose, frozen
+    assert [g["gesture"] for g in a["gestures"]] == ["rest"] and a["gestures"][0]["t"] < 0   # hands already on the desk
+    assert b["gestures"] == [] and len(a["look"]) == 1 and len(b["look"]) == 1  # no hops, gaze never switches
+    assert len({f["expr"] for f in a["face"]}) > 1                            # faces still change with the words
+    lively = d.build_scene(plan, timing, CAST, {}, 24, 720, 1280, 10.0, seed=3, quality="draft", motion="lively")
+    la, lb = lively["actors"]
+    assert not la["still"] and "think" in [g["gesture"] for g in la["gestures"]] and "cheer" in [g["gesture"] for g in lb["gestures"]]
+    assert len(lb["look"]) > 1
+    assert tj.validate_scene(still) == [] and tj.validate_scene(lively) == []

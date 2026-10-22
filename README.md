@@ -287,7 +287,10 @@ stitch). Differences from the narrated format:
   the ending; faces and gestures from the words (a hand to the cheek on questions and pauses, the mascot hops
   on "!").
 - **Render:** each line in its speaker's voice, laid out in the clip from the real voice lengths (sped up a
-  little only if needed), lip sync per speaker, hard cuts.
+  little only if needed), lip sync per speaker (the mascot has a small mouth too), hard cuts. By default the
+  characters keep still and only their faces move: expressions, blinks and the talking mouth. Settings →
+  Dialogue shorts → **Character motion → Lively** adds nods, hand beats, a hand to the cheek on questions and
+  the mascot's hops.
 - **Stitch:** whole-line captions at the top timed from the render (no transcription needed), the sound bed
   dipping under the voices, loudness, `final/qa.json`.
 

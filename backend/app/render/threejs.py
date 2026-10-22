@@ -405,7 +405,8 @@ class ThreeJSBackend:
         w, h = dims(clip.ratio, clip.resolution)
         scene = dlg.build_scene(clip.plan, timing, clip.cast, dlg.speaker_mouths(envelope, clip.plan, timing, fps), fps, w, h,
                                 clip.duration, seed=7 + clip.index * 31, quality=self.cfg.get("quality", "high"),
-                                theme=clip.theme if clip.theme == "light" else "dark", dof=float(dcfg.get("dof", 0.035)))
+                                theme=clip.theme if clip.theme == "light" else "dark", dof=float(dcfg.get("dof", 0.035)),
+                                motion=str(dcfg.get("motion", "still")))
         if self.cfg.get("animation_pack", "auto") == "off":
             scene["pack"] = False
         errs = validate_scene(scene)
